@@ -1,4 +1,4 @@
-From b709d3feaa3a1b106272ae1aa539c6f48f4bb08d Mon Sep 17 00:00:00 2001
+From cc39bb57dfaff4286a0e2604a3fb33f4e2de7892 Mon Sep 17 00:00:00 2001
 From: Dimatert9 <mikimouse100@mail.ru>
 Date: Tue, 3 Jan 2017 04:54:21 +0200
 Subject: [PATCH] Transtale to Russian
@@ -271,7 +271,7 @@ index b4cde88..b29b69b 100644
      }
  
 diff --git a/proxy/src/main/java/net/md_5/bungee/BungeeCord.java b/proxy/src/main/java/net/md_5/bungee/BungeeCord.java
-index 9ad45fc..0c08c46 100644
+index 9ad45fc..ca2c2d1 100644
 --- a/proxy/src/main/java/net/md_5/bungee/BungeeCord.java
 +++ b/proxy/src/main/java/net/md_5/bungee/BungeeCord.java
 @@ -90,6 +90,7 @@ import net.md_5.bungee.scheduler.BungeeScheduler;
@@ -313,7 +313,7 @@ index 9ad45fc..0c08c46 100644
              System.exit(0);
              return;
          }
-@@ -314,10 +320,10 @@ public class BungeeCord extends ProxyServer
+@@ -314,10 +314,10 @@ public class BungeeCord extends ProxyServer
                      if ( future.isSuccess() )
                      {
                          listeners.add( future.channel() );
@@ -326,7 +326,7 @@ index 9ad45fc..0c08c46 100644
                      }
                  }
              };
-@@ -342,10 +348,10 @@ public class BungeeCord extends ProxyServer
+@@ -342,10 +342,10 @@ public class BungeeCord extends ProxyServer
                          if ( future.isSuccess() )
                          {
                              listeners.add( future.channel() );
@@ -339,7 +339,7 @@ index 9ad45fc..0c08c46 100644
                          }
                      }
                  };
-@@ -358,13 +364,13 @@ public class BungeeCord extends ProxyServer
+@@ -358,13 +358,13 @@ public class BungeeCord extends ProxyServer
      {
          for ( Channel listener : listeners )
          {
@@ -355,7 +355,7 @@ index 9ad45fc..0c08c46 100644
              }
          }
          listeners.clear();
-@@ -389,12 +395,12 @@ public class BungeeCord extends ProxyServer
+@@ -389,12 +389,12 @@ public class BungeeCord extends ProxyServer
                  BungeeCord.this.isRunning = false;
  
                  stopListeners();
@@ -370,7 +370,7 @@ index 9ad45fc..0c08c46 100644
                      for ( UserConnection user : connections.values() )
                      {
                          user.disconnect( reason );
-@@ -404,7 +410,7 @@ public class BungeeCord extends ProxyServer
+@@ -404,7 +404,7 @@ public class BungeeCord extends ProxyServer
                      connectionLock.readLock().unlock();
                  }
  
@@ -379,7 +379,7 @@ index 9ad45fc..0c08c46 100644
                  bossEventLoopGroup.shutdownGracefully();
                  workerEventLoopGroup.shutdownGracefully();
                  while (true) {
-@@ -417,7 +423,6 @@ public class BungeeCord extends ProxyServer
+@@ -417,7 +417,6 @@ public class BungeeCord extends ProxyServer
  
                  if ( reconnectHandler != null )
                  {
@@ -387,7 +387,7 @@ index 9ad45fc..0c08c46 100644
                      reconnectHandler.save();
                      reconnectHandler.close();
                  }
-@@ -425,7 +430,7 @@ public class BungeeCord extends ProxyServer
+@@ -425,7 +424,7 @@ public class BungeeCord extends ProxyServer
                  metricsThread.cancel();
  
                  // TODO: Fix this shit
@@ -396,7 +396,7 @@ index 9ad45fc..0c08c46 100644
                  for ( Plugin plugin : Lists.reverse( new ArrayList<>( pluginManager.getPlugins() ) ) )
                  {
                      try
-@@ -437,13 +442,15 @@ public class BungeeCord extends ProxyServer
+@@ -437,13 +436,15 @@ public class BungeeCord extends ProxyServer
                          }
                      } catch ( Throwable t )
                      {
@@ -817,7 +817,7 @@ index 7969a37..a88f4e8 100644
                      CaptchaBridge.a.set(0);
                  }
 diff --git a/proxy/src/main/java/ru/yooxa/bungee/connection/CaptchaGenerator.java b/proxy/src/main/java/ru/yooxa/bungee/connection/CaptchaGenerator.java
-index 0823be9..1a0edfa 100644
+index 0823be9..93ef244 100644
 --- a/proxy/src/main/java/ru/yooxa/bungee/connection/CaptchaGenerator.java
 +++ b/proxy/src/main/java/ru/yooxa/bungee/connection/CaptchaGenerator.java
 @@ -24,7 +24,7 @@ public class CaptchaGenerator {
