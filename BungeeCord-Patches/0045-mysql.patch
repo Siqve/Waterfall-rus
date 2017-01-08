@@ -1,0 +1,249 @@
+From 13106a2d2f826112c606a34904e99e506b90f369 Mon Sep 17 00:00:00 2001
+From: Dimatert9 <mikimouse100@mail.ru>
+Date: Sun, 8 Jan 2017 08:34:50 +0200
+Subject: [PATCH] mysql
+
+
+diff --git a/proxy/src/main/java/ru/yooxa/database/SQLConnection.java b/proxy/src/main/java/ru/yooxa/database/SQLConnection.java
+new file mode 100644
+index 0000000..fab17fc
+--- /dev/null
++++ b/proxy/src/main/java/ru/yooxa/database/SQLConnection.java
+@@ -0,0 +1,110 @@
++package ru.yooxa.database;
++
++import java.sql.Connection;
++import java.sql.DriverManager;
++import java.sql.SQLException;
++import java.sql.Statement;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
++
++public class SQLConnection {
++
++    private Connection connection;
++    private ExecutorService executor;
++    private String host;
++    private String database;
++    private String user;
++    private String password;
++    private final Object sosok;
++
++    public SQLConnection(String host, String user, String password) {
++        this.sosok = new Object();
++        this.host = host;
++        this.user = user;
++        this.password = password;
++        this.executor = Executors.newSingleThreadExecutor();
++    }
++
++    public SQLConnection(String host, String user, String password, String database) {
++        this(host, user, password);
++        this.database = database;
++    }
++
++    public Connection getConnection() throws SQLException {
++        synchronized (this.sosok) {
++            if (this.connection == null || this.connection.isClosed()) {
++                this.connect();
++            }
++
++            return this.connection;
++        }
++    }
++
++    public void close() throws SQLException {
++        this.connection.close();
++        this.executor.shutdownNow();
++    }
++
++    public void connect() throws SQLException {
++        synchronized (this.sosok) {
++            try {
++                if (this.connection != null) {
++                    this.connection.close();
++                }
++            } catch (Exception exception) {
++                ;
++            }
++
++            System.out.println("[SQL] Connect to " + this.host);
++            long start = System.currentTimeMillis();
++
++            this.connection = DriverManager.getConnection("JDBC:mysql://" + this.host + ":3306/" + this.database, this.user, this.password);
++            System.out.println("[SQL] Connected [" + (System.currentTimeMillis() - start) + " ms]");
++        }
++    }
++
++    public void execute(String sql) {
++        this.execute(sql, true);
++    }
++
++    public void execute(final String sql, boolean async) {
++        Runnable runnable = new Runnable() {
++            public void run() {
++                try {
++                    Statement ex = SQLConnection.this.getConnection().createStatement();
++                    Throwable throwable = null;
++
++                    try {
++                        ex.executeUpdate(sql);
++                    } catch (Throwable throwable1) {
++                        throwable = throwable1;
++                        throw throwable1;
++                    } finally {
++                        if (ex != null) {
++                            if (throwable != null) {
++                                try {
++                                    ex.close();
++                                } catch (Throwable throwable2) {
++                                    throwable.addSuppressed(throwable2);
++                                }
++                            } else {
++                                ex.close();
++                            }
++                        }
++
++                    }
++                } catch (SQLException sqlexception) {
++                    sqlexception.printStackTrace();
++                }
++
++            }
++        };
++
++        if (async) {
++            this.executor.execute(runnable);
++        } else {
++            runnable.run();
++        }
++
++    }
++}
+diff --git a/proxy/src/main/java/ru/yooxa/database/SqlStorage.java b/proxy/src/main/java/ru/yooxa/database/SqlStorage.java
+index 42d74bf..6670ffc 100644
+--- a/proxy/src/main/java/ru/yooxa/database/SqlStorage.java
++++ b/proxy/src/main/java/ru/yooxa/database/SqlStorage.java
+@@ -1,6 +1,9 @@
+ package ru.yooxa.database;
+ 
+ import java.io.File;
++import java.sql.ResultSet;
++import java.sql.SQLException;
++import java.sql.Statement;
+ import java.util.HashSet;
+ import java.util.Set;
+ 
+@@ -13,6 +16,10 @@ public class SqlStorage {
+ 
+     private static Set<String> ips = new HashSet<String>();
+     public int threads;
++    private String host;
++    private String username;
++    private String password;
++    private String database;
+     public static boolean connectionsLog;
+     public static boolean captchaOnline;
+     public static String motd;
+@@ -22,17 +29,55 @@ public class SqlStorage {
+     public static int maxCaptcha;
+     public static int timeout;
+     public static int lenght;
++    private final SQLConnection connection;
+ 
+     public SqlStorage() {
+         this.loadConfig();
++        this.connection = new SQLConnection(this.host, this.username, this.password, this.database);
++        this.connection.execute("CREATE TABLE IF NOT EXISTS `Whitelist` (`Id` INT AUTO_INCREMENT PRIMARY KEY,`Ip` VARCHAR(16) NOT NULL UNIQUE)");
++        new Thread(() -> {
++            try {
++                Thread.sleep(50);
++                while (!Thread.interrupted()) {
++                    ips = this.loadIps();
++                    Thread.sleep(600000);
++                }
++            }
++            catch (InterruptedException var1_1) {}
++        }
++        , "Captcha SqlStorage").start();
++    }
++    public Set<String> loadIps() {
++        HashSet<String> set = new HashSet<String>();
++        Statement statement = null;
++        try {
++            statement = this.connection.getConnection().createStatement();
++            ResultSet rs = statement.executeQuery("SELECT * FROM `Whitelist`;");
++            while (rs.next()) {
++                set.add(rs.getString("Ip"));
++            }
++            rs.close();
++        }
++        catch (SQLException ex) {
++            ex.printStackTrace();
++        }
++        finally {
++            if (statement != null) {
++                try {
++                    statement.close();
++                }
++                catch (SQLException ex) {}
++            }
++        }
++        System.out.println("[Captcha] Загружено " + set.size() + " адресов");
++        return set;
+     }
+-
+     public static boolean isWhite(String ip) {
+         return SqlStorage.ips.contains(ip);
+     }
+ 
+     private void loadConfig() {
+-        File file = new File("captcha.yml");
++        File file = new File("captcha-mysql.yml");
+         
+         try {
+             Configuration config;
+@@ -47,16 +92,15 @@ public class SqlStorage {
+                 config.set("Message-Invalid", "[§cCaptcha§f] Неверная капча, у вас осталось §e%d§f попытк%s");
+                 config.set("Mam-Captcha", Integer.valueOf(1500));
+                 config.set("Captcha-lenght", Integer.valueOf(4));
++                config.set("Host", "example.com");
++                config.set("Username", "root");
++                config.set("Password", "example");
++                config.set("Database", "example");
+                 ConfigurationProvider.getProvider(YamlConfiguration.class).save(config, file);
+                 BungeeCord.getInstance().getLogger().warning("§c[CAPTCHA] §eЯ создал конфиг. Редактируй \'captcha.yml\'");
+-                BungeeCord.getInstance().getLogger().warning("§c[CAPTCHA] §aЗапуск через 5 сек'");
+                 Thread.sleep(5000l);
+-                file = new File("captcha.yml");
+-                if (!file.exists()) {
+-                    System.exit(0);
+-                    return;
+-                }
+-                config = ConfigurationProvider.getProvider(YamlConfiguration.class).load(file);
++                System.exit(0);
++                return;
+             } else {
+                 config = ConfigurationProvider.getProvider(YamlConfiguration.class).load(file);
+                 if (!config.contains("Captcha-lenght")) {
+@@ -66,6 +110,10 @@ public class SqlStorage {
+             }
+ 
+             this.threads = config.getInt("Image-Generation-Threads");
++            this.host = config.getString("Host");
++            this.username = config.getString("Username");
++            this.password = config.getString("Password");
++            this.database = config.getString("Database");
+             SqlStorage.timeout = config.getInt("Timeout");
+             SqlStorage.lenght = config.getInt("Captcha-lenght",4);
+             SqlStorage.connectionsLog = config.getBoolean("Log-Join");
+@@ -82,5 +130,6 @@ public class SqlStorage {
+ 
+     public void addIp(String ip) {
+         SqlStorage.ips.add(ip);
++        this.connection.execute("INSERT INTO `Whitelist` (`Ip`) VALUES ('" + ip + "') ON DUPLICATE KEY UPDATE `Ip`=`Ip`;");
+     }
+ }
+-- 
+2.6.1.windows.1
+
