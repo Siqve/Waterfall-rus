@@ -1,0 +1,3078 @@
+From 68486cca95ae22e9d0202f04d85cc3a17d24e05f Mon Sep 17 00:00:00 2001
+From: Dimatert9 <mikimouse100@mail.ru>
+Date: Sun, 8 Jan 2017 08:11:10 +0200
+Subject: [PATCH] Use new captcha generator
+
+
+diff --git a/proxy/src/main/java/com/github/cage/Cage.java b/proxy/src/main/java/com/github/cage/Cage.java
+deleted file mode 100644
+index 65f0b77..0000000
+--- a/proxy/src/main/java/com/github/cage/Cage.java
++++ /dev/null
+@@ -1,278 +0,0 @@
+-/*
+- * Copyright 2011 Király Attila
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *   http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package com.github.cage;
+-
+-import java.awt.Color;
+-import java.awt.Font;
+-import java.awt.image.BufferedImage;
+-import java.io.ByteArrayOutputStream;
+-import java.io.IOException;
+-import java.io.OutputStream;
+-import java.util.Iterator;
+-import java.util.Random;
+-
+-import javax.imageio.IIOImage;
+-import javax.imageio.ImageIO;
+-import javax.imageio.ImageTypeSpecifier;
+-import javax.imageio.ImageWriteParam;
+-import javax.imageio.ImageWriter;
+-import javax.imageio.stream.ImageOutputStream;
+-
+-import com.github.cage.image.Painter;
+-import com.github.cage.image.RgbColorGenerator;
+-import com.github.cage.token.RandomTokenGenerator;
+-
+-/**
+- * Convenient entry class to control captcha generation. This class is thread
+- * safe. Example usage:
+- * 
+- * <p>
+- * 
+- * <pre>
+- * <code>
+- * Cage cage = new {@link GCage}(); // lets make some "G" template captchas
+- * // use new {@link YCage}() for "Y" template or configure it yourself with
+- * // one of the Cage {@link #Cage(Painter, IGenerator, IGenerator, String,
+- * Float, IGenerator, Random) constructors}.
+- * 
+- * // ...
+- * 
+- * String token1 = cage.{@link #getTokenGenerator() getTokenGenerator()}.next();
+- * String token2 = cage.{@link #getTokenGenerator() getTokenGenerator()}.next();
+- * 
+- * cage.{@link #draw(String, OutputStream) draw}(token1, someOutputstream1);
+- * cage.{@link #draw(String, OutputStream) draw}(token2, someOutputstream2);
+- * 
+- * </code>
+- * </pre>
+- * 
+- * </p>
+- * 
+- * @author akiraly
+- * 
+- */
+-public class Cage {
+-	/**
+-	 * Default compress ratio for image encoders.
+-	 */
+-	public static final Float DEFAULT_COMPRESS_RATIO = 0.5f;
+-
+-	/**
+-	 * Default image encoding format.
+-	 */
+-	public static final String DEFAULT_FORMAT = "jpeg";
+-
+-	private final Painter painter;
+-	private final IGenerator<Font> fonts;
+-	private final IGenerator<Color> foregrounds;
+-	private final String format;
+-	private final Float compressRatio;
+-	private final IGenerator<String> tokenGenerator;
+-
+-	/**
+-	 * Default constructor. Calls
+-	 * {@link Cage#Cage(Painter, IGenerator, IGenerator, String, Float, IGenerator, Random)}
+-	 */
+-	public Cage() {
+-		this(null, null, null, null, DEFAULT_COMPRESS_RATIO, null, null);
+-	}
+-
+-	/**
+-	 * Constructor.
+-	 * 
+-	 * @param painter
+-	 *            to be used for painting, can be null
+-	 * @param fonts
+-	 *            generator used to generate fonts for texts, defaults to a
+-	 *            random chooser from some predefined set of fonts, can be null
+-	 * @param foregrounds
+-	 *            generator used to generate colors for texts, defaults to a
+-	 *            random "not-bright-so-it-is-readable-on-white" color
+-	 *            generator, can be null
+-	 * @param format
+-	 *            output format, default "jpeg", can be null
+-	 * @param compressRatio
+-	 *            a number in [0f, 1f] interval if compression should be used
+-	 *            with the output format. The format must support compression
+-	 *            (like jpeg and png). If null no compression is done.
+-	 * @param tokenGenerator
+-	 *            a custom String token generator, can be null. If null is
+-	 *            passed a default is created. It is not used by Cage it is only
+-	 *            stored for convenience. Can be retrieved by
+-	 *            {@link #getTokenGenerator()}.
+-	 * @param rnd
+-	 *            random generator to be used, can be null
+-	 */
+-	public Cage(Painter painter, IGenerator<Font> fonts,
+-			IGenerator<Color> foregrounds, String format, Float compressRatio,
+-			IGenerator<String> tokenGenerator, Random rnd) {
+-		if (rnd == null) {
+-			rnd = new Random();
+-		}
+-		this.painter = painter != null ? painter : new Painter(rnd);
+-		int defFontHeight = this.painter.getHeight() / 2;
+-		this.fonts = fonts != null ? fonts : new ObjectRoulette<Font>(rnd, //
+-				new Font(Font.SANS_SERIF, Font.PLAIN, defFontHeight), //
+-				// new Font(Font.SANS_SERIF, Font.ITALIC, defFontHeight),//
+-				new Font(Font.SERIF, Font.PLAIN, defFontHeight), //
+-				// new Font(Font.SERIF, Font.ITALIC, defFontHeight), //
+-				new Font(Font.MONOSPACED, Font.BOLD, defFontHeight)); //
+-		// new Font(Font.MONOSPACED, Font.ITALIC, defFontHeight));
+-		this.foregrounds = foregrounds != null ? foregrounds
+-				: new RgbColorGenerator(rnd);
+-		this.format = format != null ? format : DEFAULT_FORMAT;
+-		this.compressRatio = compressRatio;
+-		this.tokenGenerator = tokenGenerator != null ? tokenGenerator
+-				: new RandomTokenGenerator(rnd);
+-	}
+-
+-	/**
+-	 * Generate an image and serialize it to the output. This method can call
+-	 * {@link OutputStream#close()} on the supplied output stream.
+-	 * 
+-	 * @param text
+-	 *            to be drawn on the image
+-	 * @param ostream
+-	 *            captcha image is serialized to this
+-	 * @throws IOException
+-	 *             if IO error occurs.
+-	 */
+-	public void draw(String text, OutputStream ostream) throws IOException {
+-		BufferedImage img = drawImage(text);
+-		serialize(img, ostream);
+-	}
+-
+-	/**
+-	 * Generate an image and return it in a byte array.
+-	 * 
+-	 * @param text
+-	 *            to be drawn on the image
+-	 * @return byte array holding the serialized generated image
+-	 */
+-	public byte[] draw(String text) {
+-		ByteArrayOutputStream baos = new ByteArrayOutputStream();
+-		try {
+-			try {
+-				draw(text, baos);
+-			} finally {
+-				baos.close();
+-			}
+-		} catch (IOException e) {
+-			// IO errors should not happen we were writing to memory
+-			throw new RuntimeException(
+-					"IO error while writing captcha image to memory.", e);
+-		}
+-
+-		return baos.toByteArray();
+-	}
+-
+-	/**
+-	 * Generates a captcha image.
+-	 * 
+-	 * @param text
+-	 *            to be drawn
+-	 * @return generated image
+-	 */
+-	public BufferedImage drawImage(String text) {
+-		Font font = fonts.next();
+-		Color fground = foregrounds.next();
+-		return painter.draw(font, fground, text);
+-	}
+-
+-	/**
+-	 * Serializes an image to an {@link OutputStream}. This method can call
+-	 * {@link OutputStream#close()} on the supplied output stream.
+-	 * 
+-	 * @param img
+-	 *            to be serialized
+-	 * @param ostream
+-	 *            to be written to
+-	 * @throws IOException
+-	 *             if IO error occurs.
+-	 */
+-	protected void serialize(BufferedImage img, OutputStream ostream)
+-			throws IOException {
+-		ImageTypeSpecifier type = ImageTypeSpecifier
+-				.createFromRenderedImage(img);
+-		Iterator<ImageWriter> iwi = ImageIO.getImageWriters(type, this.format);
+-		if (iwi == null || !iwi.hasNext()) {
+-			throw new IllegalStateException(
+-					"No image writer found for format = " + this.format);
+-		}
+-		ImageWriter iw = iwi.next();
+-		try {
+-			ImageWriteParam iwp;
+-			if (compressRatio != null) {
+-				iwp = iw.getDefaultWriteParam();
+-				iwp.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+-				iwp.setCompressionQuality(compressRatio);
+-			} else {
+-				iwp = null;
+-			}
+-			ImageOutputStream ios = ImageIO.createImageOutputStream(ostream);
+-			try {
+-				iw.setOutput(ios);
+-				iw.write(null, new IIOImage(img, null, null), iwp);
+-			} finally {
+-				ios.close();
+-			}
+-		} finally {
+-			iw.dispose();
+-		}
+-	}
+-
+-	/**
+-	 * @return object used to draw the image, not null
+-	 */
+-	public Painter getPainter() {
+-		return painter;
+-	}
+-
+-	/**
+-	 * @return font generator used to choose a font, not null
+-	 */
+-	public IGenerator<Font> getFonts() {
+-		return fonts;
+-	}
+-
+-	/**
+-	 * @return foreground generator used to choose a text color, not null
+-	 */
+-	public IGenerator<Color> getForegrounds() {
+-		return foregrounds;
+-	}
+-
+-	/**
+-	 * @return used image encoding format, like "jpeg", not null
+-	 */
+-	public String getFormat() {
+-		return format;
+-	}
+-
+-	/**
+-	 * @return compress ratio used by image encoding, can be null
+-	 */
+-	public Float getCompressRatio() {
+-		return compressRatio;
+-	}
+-
+-	/**
+-	 * @return token generator to produce strings for the image, not null
+-	 */
+-	public IGenerator<String> getTokenGenerator() {
+-		return tokenGenerator;
+-	}
+-}
+diff --git a/proxy/src/main/java/com/github/cage/GCage.java b/proxy/src/main/java/com/github/cage/GCage.java
+deleted file mode 100644
+index 61b284e..0000000
+--- a/proxy/src/main/java/com/github/cage/GCage.java
++++ /dev/null
+@@ -1,30 +0,0 @@
+-/*
+- * Copyright 2011 Király Attila
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *   http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package com.github.cage;
+-
+-/**
+- * Creates and configures a {@link Cage} instance that can generate captcha
+- * images similar to Google's. This is the "G" template. Simply create an
+- * instance with <code>new GCage()</code> and you can generate images. See
+- * {@link Cage} for more info.
+- * 
+- * This class is thread safe.
+- * 
+- * @author akiraly
+- */
+-public class GCage extends com.github.cage.Cage {
+-
+-}
+diff --git a/proxy/src/main/java/com/github/cage/IGenerator.java b/proxy/src/main/java/com/github/cage/IGenerator.java
+deleted file mode 100644
+index 3685cad..0000000
+--- a/proxy/src/main/java/com/github/cage/IGenerator.java
++++ /dev/null
+@@ -1,34 +0,0 @@
+-/*
+- * Copyright 2011 Király Attila
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *   http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package com.github.cage;
+-
+-/**
+- * Object generator.
+- * 
+- * @param <T>
+- *            the type of objects generated by this class
+- * 
+- * @author akiraly
+- */
+-public interface IGenerator<T> {
+-	/**
+-	 * Returns an object with type <code>T</code> on every call. The returned
+-	 * object does not have to be a new instance.
+-	 * 
+-	 * @return generated object
+-	 */
+-	T next();
+-}
+diff --git a/proxy/src/main/java/com/github/cage/IGeneratorFactory.java b/proxy/src/main/java/com/github/cage/IGeneratorFactory.java
+deleted file mode 100644
+index 40ba354..0000000
+--- a/proxy/src/main/java/com/github/cage/IGeneratorFactory.java
++++ /dev/null
+@@ -1,28 +0,0 @@
+-/*
+- * Copyright 2011 Király Attila
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *   http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package com.github.cage;
+-
+-/**
+- * Factory creating {@link IGenerator}s.
+- * 
+- * @param <T>
+- *            the type of objects generated by the generators created by this
+- *            object.
+- * 
+- * @author akiraly
+- */
+-public interface IGeneratorFactory<T> extends IGenerator<IGenerator<T>> {
+-}
+diff --git a/proxy/src/main/java/com/github/cage/ObjectRoulette.java b/proxy/src/main/java/com/github/cage/ObjectRoulette.java
+deleted file mode 100644
+index 6d0cc94..0000000
+--- a/proxy/src/main/java/com/github/cage/ObjectRoulette.java
++++ /dev/null
+@@ -1,61 +0,0 @@
+-/*
+- * Copyright 2011 Király Attila
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *   http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package com.github.cage;
+-
+-import java.util.Random;
+-
+-/**
+- * An {@link IGenerator} implementation that returns a randomly chosen element
+- * from a predefined set of objects when {@link #next()} is called. This class
+- * is thread safe.
+- * 
+- * @param <T>
+- *            the type of objects generated by this class
+- * 
+- * @author akiraly
+- */
+-public class ObjectRoulette<T> implements IGenerator<T> {
+-	private final T[] candidates;
+-
+-	private final Random rnd;
+-
+-	/**
+-	 * Constructor.
+-	 * 
+-	 * @param rnd
+-	 *            random generator to be used, can be null
+-	 * @param candidates
+-	 *            the set of objects to choose from; not null, not empty
+-	 */
+-	public ObjectRoulette(Random rnd, T... candidates) {
+-		if (candidates == null || candidates.length < 1) {
+-			throw new IllegalArgumentException("No candidates given.");
+-		}
+-		this.candidates = candidates;
+-		this.rnd = rnd != null ? rnd : new Random();
+-	}
+-
+-	public T next() {
+-		return candidates[rnd.nextInt(candidates.length)];
+-	}
+-
+-	/**
+-	 * @return the set of objects to choose from
+-	 */
+-	public T[] getCandidates() {
+-		return candidates;
+-	}
+-}
+diff --git a/proxy/src/main/java/com/github/cage/YCage.java b/proxy/src/main/java/com/github/cage/YCage.java
+deleted file mode 100644
+index e367834..0000000
+--- a/proxy/src/main/java/com/github/cage/YCage.java
++++ /dev/null
+@@ -1,96 +0,0 @@
+-/*
+- * Copyright 2011 Király Attila
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *   http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package com.github.cage;
+-
+-import java.awt.Color;
+-import java.util.Locale;
+-import java.util.Random;
+-
+-import com.github.cage.image.ConstantColorGenerator;
+-import com.github.cage.image.EffectConfig;
+-import com.github.cage.image.Painter;
+-import com.github.cage.image.ScaleConfig;
+-import com.github.cage.token.RandomCharacterGeneratorFactory;
+-import com.github.cage.token.RandomTokenGenerator;
+-
+-/**
+- * Creates and configures a {@link Cage} instance that can generate captcha
+- * images similar to Yahoo's. This is the "Y" template. Simply create an
+- * instance with <code>new YCage()</code> and you can generate images. See
+- * {@link Cage} for more info.
+- * 
+- * This class is thread safe.
+- * 
+- * @author akiraly
+- */
+-public class YCage extends com.github.cage.Cage {
+-	/**
+-	 * Height of CAPTCHA image.
+-	 */
+-	protected static final int HEIGHT = 80;
+-
+-	/**
+-	 * Width of CAPTCHA image.
+-	 */
+-	protected static final int WIDTH = 290;
+-
+-	/**
+-	 * Character set supplied to the {@link RandomTokenGenerator} used by this
+-	 * template.
+-	 */
+-	protected static final char[] TOKEN_DEFAULT_CHARACTER_SET = (new String(
+-			RandomCharacterGeneratorFactory.DEFAULT_DEFAULT_CHARACTER_SET)
+-			.replaceAll("b|f|i|j|l|m|o|t", "")
+-			+ new String(
+-					RandomCharacterGeneratorFactory.DEFAULT_DEFAULT_CHARACTER_SET)
+-					.replaceAll("c|i|o", "").toUpperCase(Locale.ENGLISH) + new String(
+-			RandomCharacterGeneratorFactory.ARABIC_NUMERALS).replaceAll(
+-			"0|1|9", "")).toCharArray();
+-
+-	/**
+-	 * Minimum length of token.
+-	 */
+-	protected static final int TOKEN_LEN_MIN = 6;
+-
+-	/**
+-	 * Maximum length of token is {@value #TOKEN_LEN_MIN} +
+-	 * {@value #TOKEN_LEN_DELTA}.
+-	 */
+-	protected static final int TOKEN_LEN_DELTA = 2;
+-
+-	/**
+-	 * Constructor.
+-	 */
+-	public YCage() {
+-		this(new Random());
+-	}
+-
+-	/**
+-	 * Constructor.
+-	 * 
+-	 * @param rnd
+-	 *            object used for random value generation. Not null.
+-	 */
+-	protected YCage(Random rnd) {
+-		super(new Painter(WIDTH, HEIGHT, null, null, new EffectConfig(true,
+-				true, true, false, new ScaleConfig(0.55f, 0.55f)), rnd), null,
+-				new ConstantColorGenerator(Color.BLACK), null,
+-				Cage.DEFAULT_COMPRESS_RATIO, new RandomTokenGenerator(rnd,
+-						new RandomCharacterGeneratorFactory(
+-								TOKEN_DEFAULT_CHARACTER_SET, null, rnd),
+-						TOKEN_LEN_MIN, TOKEN_LEN_DELTA), rnd);
+-	}
+-}
+diff --git a/proxy/src/main/java/com/github/cage/image/ConstantColorGenerator.java b/proxy/src/main/java/com/github/cage/image/ConstantColorGenerator.java
+deleted file mode 100644
+index e6deff6..0000000
+--- a/proxy/src/main/java/com/github/cage/image/ConstantColorGenerator.java
++++ /dev/null
+@@ -1,46 +0,0 @@
+-/*
+- * Copyright 2011 Király Attila
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *   http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package com.github.cage.image;
+-
+-import java.awt.Color;
+-
+-import com.github.cage.IGenerator;
+-
+-/**
+- * {@link IGenerator} implementation that returns always the same {@link Color}.
+- * This class is thread safe.
+- * 
+- * @author akiraly
+- * 
+- */
+-public class ConstantColorGenerator implements IGenerator<Color> {
+-	private final Color color;
+-
+-	/**
+-	 * Constructor.
+-	 * 
+-	 * @param color
+-	 *            not null
+-	 */
+-	public ConstantColorGenerator(Color color) {
+-		this.color = color;
+-	}
+-
+-	public Color next() {
+-		return color;
+-	}
+-
+-}
+diff --git a/proxy/src/main/java/com/github/cage/image/EffectConfig.java b/proxy/src/main/java/com/github/cage/image/EffectConfig.java
+deleted file mode 100644
+index 042bf0b..0000000
+--- a/proxy/src/main/java/com/github/cage/image/EffectConfig.java
++++ /dev/null
+@@ -1,103 +0,0 @@
+-/*
+- * Copyright 2011 Király Attila
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *   http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package com.github.cage.image;
+-import ru.yooxa.database.SqlStorage;
+-/**
+- * Class to represent used effect configuration by {@link Painter}.
+- * 
+- * @author akiraly
+- */
+-public class EffectConfig {
+-	private final boolean rippleEnabled;
+-	private final boolean blurEnabled;
+-	private final boolean outlineEnabled;
+-	private final boolean rotateEnabled;
+-	private final ScaleConfig scaleConfig;
+-
+-	/**
+-	 * Constructor.
+-	 */
+-	public EffectConfig() {
+-		this(SqlStorage.Ripple, SqlStorage.Blur, SqlStorage.Outline, SqlStorage.Rotate, null);
+-	}
+-
+-	/**
+-	 * Constructor.
+-	 * 
+-	 * @param rippleEnabled
+-	 *            waving effect should be used, default true, disabling this
+-	 *            helps performance
+-	 * @param blurEnabled
+-	 *            should the image be blurred, default true, disabling this
+-	 *            helps performance
+-	 * @param outlineEnabled
+-	 *            should a shifted, font colored outline be drawn behind the
+-	 *            characters, default false, disabling this helps performance
+-	 *            slightly
+-	 * @param rotateEnabled
+-	 *            should the letters be rotated independently, default true,
+-	 *            disabling this helps performance slightly
+-	 * @param scaleConfig
+-	 *            scaling information for the captcha image, can be null
+-	 */
+-	public EffectConfig(boolean rippleEnabled, boolean blurEnabled,
+-			boolean outlineEnabled, boolean rotateEnabled,
+-			ScaleConfig scaleConfig) {
+-		super();
+-		this.rippleEnabled = rippleEnabled;
+-		this.blurEnabled = blurEnabled;
+-		this.outlineEnabled = outlineEnabled;
+-		this.rotateEnabled = rotateEnabled;
+-		this.scaleConfig = scaleConfig != null ? scaleConfig
+-				: new ScaleConfig();
+-	}
+-
+-	/**
+-	 * @return true if the image will be rippled (waved)
+-	 */
+-	public boolean isRippleEnabled() {
+-		return rippleEnabled;
+-	}
+-
+-	/**
+-	 * @return true if the image will be blurred
+-	 */
+-	public boolean isBlurEnabled() {
+-		return blurEnabled;
+-	}
+-
+-	/**
+-	 * @return true if outline shadow for text will be drawn on the image
+-	 */
+-	public boolean isOutlineEnabled() {
+-		return outlineEnabled;
+-	}
+-
+-	/**
+-	 * @return true if the text letters will be rotated before drawn on the
+-	 *         image
+-	 */
+-	public boolean isRotateEnabled() {
+-		return rotateEnabled;
+-	}
+-
+-	/**
+-	 * @return scaling information for the captcha image, not null
+-	 */
+-	public ScaleConfig getScaleConfig() {
+-		return scaleConfig;
+-	}
+-}
+diff --git a/proxy/src/main/java/com/github/cage/image/Painter.java b/proxy/src/main/java/com/github/cage/image/Painter.java
+deleted file mode 100644
+index df7046d..0000000
+--- a/proxy/src/main/java/com/github/cage/image/Painter.java
++++ /dev/null
+@@ -1,423 +0,0 @@
+-/*
+- * Copyright 2011 Király Attila
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *   http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package com.github.cage.image;
+-
+-import java.awt.Color;
+-import java.awt.Font;
+-import java.awt.Graphics;
+-import java.awt.Graphics2D;
+-import java.awt.Rectangle;
+-import java.awt.RenderingHints;
+-import java.awt.font.GlyphVector;
+-import java.awt.geom.AffineTransform;
+-import java.awt.geom.Point2D;
+-import java.awt.geom.Rectangle2D;
+-import java.awt.image.BufferedImage;
+-import java.awt.image.ConvolveOp;
+-import java.awt.image.Kernel;
+-import java.util.Random;
+-
+-/**
+- * This class does most of the captcha drawing. This class is thread safe.
+- * 
+- * @author akiraly
+- * 
+- */
+-public class Painter {
+-	/**
+-	 * Enumeration for different image quality levels.
+-	 */
+-	public static enum Quality {
+-		/**
+-		 * Rendering hints should be set to minimum quality.
+-		 */
+-		MIN, /**
+-		 * Rendering hints should be not set so they use the default.
+-		 * quality
+-		 */
+-		DEFAULT, /**
+-		 * Rendering hints should be set to maximum quality.
+-		 */
+-		MAX
+-	}
+-
+-	/**
+-	 * Default image width.
+-	 */
+-	public static final int DEFAULT_WIDTH = 200;
+-
+-	/**
+-	 * Default image height.
+-	 */
+-	public static final int DEFAULT_HEIGHT = 70;
+-
+-	private final int width;
+-	private final int height;
+-	private final Color background;
+-	private final Quality quality;
+-	private final EffectConfig effectConfig;
+-	private final Random rnd;
+-
+-	/**
+-	 * Constructor.
+-	 */
+-	public Painter() {
+-		this(DEFAULT_WIDTH, DEFAULT_HEIGHT, null, null, null, null);
+-	}
+-
+-	/**
+-	 * Constructor.
+-	 * 
+-	 * @param rnd
+-	 *            random generator to be used, can be null
+-	 */
+-	public Painter(Random rnd) {
+-		this(DEFAULT_WIDTH, DEFAULT_HEIGHT, null, null, null, rnd);
+-	}
+-
+-	/**
+-	 * Constructor.
+-	 * 
+-	 * @param width
+-	 *            captcha image width, default {@link #DEFAULT_WIDTH}
+-	 * @param height
+-	 *            captcha image height, default {@link #DEFAULT_HEIGHT}
+-	 * @param bGround
+-	 *            background color of captcha image, default white, can be null
+-	 * @param quality
+-	 *            captcha image quality, default {@link Quality#MAX}, should use
+-	 *            max it does not have measurable speed penalty on modern jvm-s
+-	 *            (1.6u23), can be null
+-	 * @param effectConfig
+-	 *            used to define what effects should be used, can be null
+-	 * @param rnd
+-	 *            random generator to be used, can be null
+-	 */
+-	public Painter(int width, int height, Color bGround, Quality quality,
+-			EffectConfig effectConfig, Random rnd) {
+-		super();
+-		this.width = width;
+-		this.height = height;
+-		this.background = bGround != null ? bGround : Color.WHITE;
+-		this.quality = quality != null ? quality : Quality.MAX;
+-		this.effectConfig = effectConfig != null ? effectConfig
+-				: new EffectConfig();
+-		this.rnd = rnd != null ? rnd : new Random();
+-	}
+-
+-	/**
+-	 * Generates a new captcha image.
+-	 * 
+-	 * @param font
+-	 *            will be used for text, not null
+-	 * @param fGround
+-	 *            will be used for text, not null
+-	 * @param text
+-	 *            this will be rendered on the image, not null, not 0 length
+-	 * @return the generated image
+-	 */
+-	public BufferedImage draw(Font font, Color fGround, String text) {
+-		if (font == null) {
+-			throw new IllegalArgumentException("Font can not be null.");
+-		}
+-		if (fGround == null) {
+-			throw new IllegalArgumentException(
+-					"Foreground color can not be null.");
+-		}
+-		if (text == null || text.length() < 1) {
+-			throw new IllegalArgumentException("No text given.");
+-		}
+-
+-		BufferedImage img = createImage();
+-
+-		Graphics g = img.getGraphics();
+-		try {
+-			Graphics2D g2 = configureGraphics(g, font, fGround);
+-
+-			draw(g2, text);
+-		} finally {
+-			g.dispose();
+-		}
+-
+-		img = postProcess(img);
+-
+-		return img;
+-	}
+-
+-	/**
+-	 * Creates a new image to draw upon.
+-	 * 
+-	 * @return new image, not null
+-	 */
+-	protected BufferedImage createImage() {
+-		return new BufferedImage(width, height, BufferedImage.TYPE_3BYTE_BGR);
+-	}
+-
+-	/**
+-	 * Configures graphics object before drawing text on it.
+-	 * 
+-	 * @param g
+-	 *            to be configured must be an instance of {@link Graphics2D},
+-	 *            not null
+-	 * @param font
+-	 *            to be used for the text, not null
+-	 * @param fGround
+-	 *            to be used for the text, not null
+-	 * 
+-	 * @return g casted to {@link Graphics2D} or throws exception if g is not
+-	 *         instance of {@link Graphics2D}.
+-	 */
+-	protected Graphics2D configureGraphics(Graphics g, Font font, Color fGround) {
+-		if (!(g instanceof Graphics2D)) {
+-			throw new IllegalStateException("Graphics (" + g
+-					+ ") that is not an instance of Graphics2D.");
+-		}
+-		Graphics2D g2 = (Graphics2D) g;
+-
+-		configureGraphicsQuality(g2);
+-
+-		g2.setColor(fGround);
+-		g2.setBackground(background);
+-		g2.setFont(font);
+-
+-		g2.clearRect(0, 0, width, height);
+-
+-		return g2;
+-	}
+-
+-	/**
+-	 * Sets quality related hints based on the quality field of this object.
+-	 * 
+-	 * @param g2
+-	 *            to be configured, not null
+-	 */
+-	protected void configureGraphicsQuality(Graphics2D g2) {
+-		if (quality == Quality.MAX) {
+-			g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
+-					RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+-			g2.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS,
+-					RenderingHints.VALUE_FRACTIONALMETRICS_ON);
+-			g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+-					RenderingHints.VALUE_ANTIALIAS_ON);
+-			g2.setRenderingHint(RenderingHints.KEY_COLOR_RENDERING,
+-					RenderingHints.VALUE_COLOR_RENDER_QUALITY);
+-			g2.setRenderingHint(RenderingHints.KEY_DITHERING,
+-					RenderingHints.VALUE_DITHER_ENABLE);
+-			g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+-					RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+-			g2.setRenderingHint(RenderingHints.KEY_ALPHA_INTERPOLATION,
+-					RenderingHints.VALUE_ALPHA_INTERPOLATION_QUALITY);
+-			g2.setRenderingHint(RenderingHints.KEY_RENDERING,
+-					RenderingHints.VALUE_RENDER_QUALITY);
+-		} else if (quality == Quality.MIN) {
+-			g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
+-					RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
+-			g2.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS,
+-					RenderingHints.VALUE_FRACTIONALMETRICS_OFF);
+-			g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+-					RenderingHints.VALUE_ANTIALIAS_OFF);
+-			g2.setRenderingHint(RenderingHints.KEY_COLOR_RENDERING,
+-					RenderingHints.VALUE_COLOR_RENDER_SPEED);
+-			g2.setRenderingHint(RenderingHints.KEY_DITHERING,
+-					RenderingHints.VALUE_DITHER_DISABLE);
+-			g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+-					RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+-			g2.setRenderingHint(RenderingHints.KEY_ALPHA_INTERPOLATION,
+-					RenderingHints.VALUE_ALPHA_INTERPOLATION_SPEED);
+-			g2.setRenderingHint(RenderingHints.KEY_RENDERING,
+-					RenderingHints.VALUE_RENDER_SPEED);
+-		}
+-	}
+-
+-	/**
+-	 * Does some of the text transformation (calls
+-	 * {@link #transform(Graphics2D, String, GlyphVector)}), scales, transforms
+-	 * and draws the result (also the outline if needed).
+-	 * 
+-	 * @param g
+-	 *            to be drawn upon
+-	 * @param text
+-	 *            to be drawn
+-	 */
+-	protected void draw(Graphics2D g, String text) {
+-		GlyphVector vector = g.getFont().createGlyphVector(
+-				g.getFontRenderContext(), text);
+-
+-		transform(g, text, vector);
+-
+-		Rectangle bounds = vector.getPixelBounds(null, 0, height);
+-		float bw = (float) bounds.getWidth();
+-		float bh = (float) bounds.getHeight();
+-
+-		boolean outlineEnabled = effectConfig.isOutlineEnabled();
+-
+-		// transform + scale text to better fit the image
+-		float wr = width / bw
+-				* (rnd.nextFloat() / 20 + (outlineEnabled ? 0.89f : 0.92f))
+-				* effectConfig.getScaleConfig().getX();
+-		float hr = height / bh
+-				* (rnd.nextFloat() / 20 + (outlineEnabled ? 0.68f : 0.75f))
+-				* effectConfig.getScaleConfig().getY();
+-		g.translate((width - bw * wr) / 2, (height - bh * hr) / 2);
+-		g.scale(wr, hr);
+-
+-		float bx = (float) bounds.getX();
+-		float by = (float) bounds.getY();
+-		// draw outline if needed
+-		if (outlineEnabled) {
+-			g.draw(vector.getOutline(Math.signum(rnd.nextFloat() - 0.5f) * 1
+-					* width / 200 - bx, Math.signum(rnd.nextFloat() - 0.5f) * 1
+-					* height / 70 + height - by));
+-		}
+-		g.drawGlyphVector(vector, -bx, height - by);
+-	}
+-
+-	/**
+-	 * Does some of the text transformation (like rotation and symbol crowding).
+-	 * 
+-	 * @param g
+-	 *            to be drawn upon
+-	 * @param text
+-	 *            to be drawn
+-	 * @param v
+-	 *            graphical representation of text, to be transformed
+-	 */
+-	protected void transform(Graphics2D g, String text, GlyphVector v) {
+-		int glyphNum = v.getNumGlyphs();
+-
+-		Point2D prePos = null;
+-		Rectangle2D preBounds = null;
+-
+-		double rotateCur = (rnd.nextDouble() - 0.5) * Math.PI / 8;
+-		double rotateStep = Math.signum(rotateCur)
+-				* (rnd.nextDouble() * 3 * Math.PI / 8 / glyphNum);
+-		boolean rotateEnabled = effectConfig.isRotateEnabled();
+-
+-		for (int fi = 0; fi < glyphNum; fi++) {
+-			if (rotateEnabled) {
+-				AffineTransform tr = AffineTransform
+-						.getRotateInstance(rotateCur);
+-				if (rnd.nextDouble() < 0.25) {
+-					rotateStep *= -1;
+-				}
+-				rotateCur += rotateStep;
+-				v.setGlyphTransform(fi, tr);
+-			}
+-			Point2D pos = v.getGlyphPosition(fi);
+-			Rectangle2D bounds = v.getGlyphVisualBounds(fi).getBounds2D();
+-			Point2D newPos;
+-			if (prePos == null) {
+-				newPos = new Point2D.Double(pos.getX() - bounds.getX(),
+-						pos.getY());
+-			} else {
+-				newPos = new Point2D.Double(
+-						preBounds.getMaxX()
+-								+ pos.getX()
+-								- bounds.getX()
+-								- Math.min(preBounds.getWidth(),
+-										bounds.getWidth())
+-								* (rnd.nextDouble() / 20 + (rotateEnabled ? 0.27
+-										: 0.1)), pos.getY());
+-			}
+-			v.setGlyphPosition(fi, newPos);
+-			prePos = newPos;
+-			preBounds = v.getGlyphVisualBounds(fi).getBounds2D();
+-		}
+-	}
+-
+-	/**
+-	 * Does some post processing on the generated image if needed. Like rippling
+-	 * (waving) and blurring.
+-	 * 
+-	 * @param img
+-	 *            to be post prosessed.
+-	 * @return the finished image, maybe the same as the input
+-	 */
+-	protected BufferedImage postProcess(BufferedImage img) {
+-		if (effectConfig.isRippleEnabled()) {
+-			Rippler.AxisConfig vertical = new Rippler.AxisConfig(
+-					rnd.nextDouble() * 2 * Math.PI, (1 + rnd.nextDouble() * 2)
+-							* Math.PI, img.getHeight() / 10.0);
+-			Rippler.AxisConfig horizontal = new Rippler.AxisConfig(
+-					rnd.nextDouble() * 2 * Math.PI, (2 + rnd.nextDouble() * 2)
+-							* Math.PI, img.getWidth() / 100.0);
+-			Rippler op = new Rippler(vertical, horizontal);
+-
+-			img = op.filter(img, createImage());
+-		}
+-		if (effectConfig.isBlurEnabled()) {
+-			float[] blurArray = new float[9];
+-			fillBlurArray(blurArray);
+-			ConvolveOp op = new ConvolveOp(new Kernel(3, 3, blurArray),
+-					ConvolveOp.EDGE_NO_OP, null);
+-
+-			img = op.filter(img, createImage());
+-		}
+-		return img;
+-	}
+-
+-	/**
+-	 * Generates a random probability distribution. Used by blurring.
+-	 * 
+-	 * @param array
+-	 *            filled with random values. The values in array sum up to 1.
+-	 */
+-	protected void fillBlurArray(float[] array) {
+-		float sum = 0;
+-		for (int fi = 0; fi < array.length; fi++) {
+-			array[fi] = rnd.nextFloat();
+-			sum += array[fi];
+-		}
+-		for (int fi = 0; fi < array.length; fi++) {
+-			array[fi] /= sum;
+-		}
+-	}
+-
+-	/**
+-	 * @return width of the image
+-	 */
+-	public int getWidth() {
+-		return width;
+-	}
+-
+-	/**
+-	 * @return height of the image
+-	 */
+-	public int getHeight() {
+-		return height;
+-	}
+-
+-	/**
+-	 * @return background color of the image, not null
+-	 */
+-	public Color getBackground() {
+-		return background;
+-	}
+-
+-	/**
+-	 * @return quality level of the image, not null
+-	 */
+-	public Quality getQuality() {
+-		return quality;
+-	}
+-
+-	/**
+-	 * @return configuration for effects, not null
+-	 */
+-	public EffectConfig getEffectConfig() {
+-		return effectConfig;
+-	}
+-}
+diff --git a/proxy/src/main/java/com/github/cage/image/RgbColorGenerator.java b/proxy/src/main/java/com/github/cage/image/RgbColorGenerator.java
+deleted file mode 100644
+index 37b39e7..0000000
+--- a/proxy/src/main/java/com/github/cage/image/RgbColorGenerator.java
++++ /dev/null
+@@ -1,59 +0,0 @@
+-/*
+- * Copyright 2011 Király Attila
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *   http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package com.github.cage.image;
+-
+-import java.awt.Color;
+-import java.util.Random;
+-
+-import com.github.cage.IGenerator;
+-
+-/**
+- * Random RGB {@link Color} object generator. The returned {@link Color}-s are
+- * not too bright so they look good on white background. This class is thread
+- * safe.
+- * 
+- * @author akiraly
+- */
+-public class RgbColorGenerator implements IGenerator<Color> {
+-	private final Random rnd;
+-
+-	/**
+-	 * Constructor.
+-	 * 
+-	 * @param rnd
+-	 *            random generator to be used, can be null
+-	 */
+-	public RgbColorGenerator(Random rnd) {
+-		this.rnd = rnd != null ? rnd : new Random();
+-	}
+-
+-	public Color next() {
+-		int[] c = new int[3];
+-
+-		int i = rnd.nextInt(c.length);
+-
+-		for (int fi = 0; fi < c.length; fi++) {
+-			if (fi == i) {
+-				c[fi] = rnd.nextInt(71);
+-			} else {
+-				c[fi] = rnd.nextInt(256);
+-			}
+-		}
+-
+-		return new Color(c[0], c[1], c[2]);
+-	}
+-
+-}
+diff --git a/proxy/src/main/java/com/github/cage/image/Rippler.java b/proxy/src/main/java/com/github/cage/image/Rippler.java
+deleted file mode 100644
+index 0f9d03f..0000000
+--- a/proxy/src/main/java/com/github/cage/image/Rippler.java
++++ /dev/null
+@@ -1,182 +0,0 @@
+-/*
+- * Copyright 2011 Király Attila
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *   http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package com.github.cage.image;
+-
+-import java.awt.image.BufferedImage;
+-
+-/**
+- * A filter to generate ripple (wave) effected images. Uses a transformed sinus
+- * wave for this. This class is thread safe.
+- * 
+- * @author akiraly
+- * 
+- */
+-public class Rippler {
+-	/**
+-	 * Class to respresent wave tranforming information for an axis.
+-	 */
+-	public static class AxisConfig {
+-		private final double start;
+-
+-		private final double length;
+-
+-		private final double amplitude;
+-
+-		/**
+-		 * Constructor.
+-		 * 
+-		 * @param start
+-		 *            the starting x offset to generate wave values. Should be
+-		 *            between 0 and 2 * {@link Math#PI}.
+-		 * @param length
+-		 *            the length of x to be used to generate wave values. Should
+-		 *            be between 0 and 4 * {@link Math#PI}.
+-		 * @param amplitude
+-		 *            the maximum y value, if it is too big, some important
+-		 *            parts of the image (like the text) can "wave" out on the
+-		 *            top or on the bottom of the image.
+-		 */
+-		public AxisConfig(double start, double length, double amplitude) {
+-			this.start = normalize(start, 2);
+-			this.length = normalize(length, 4);
+-			this.amplitude = amplitude;
+-		}
+-
+-		/**
+-		 * Normalizes parameter to fall into [0, multi * {@link Math#PI}].
+-		 * 
+-		 * @param a
+-		 *            to be normalized
+-		 * @param multi
+-		 *            multiplicator used for end value
+-		 * @return normalized value
+-		 */
+-		protected double normalize(double a, int multi) {
+-			double piMulti = multi * Math.PI;
+-
+-			a = Math.abs(a);
+-			double d = Math.floor(a / piMulti);
+-
+-			return a - d * piMulti;
+-		}
+-
+-		/**
+-		 * @return wave part start value
+-		 */
+-		public double getStart() {
+-			return start;
+-		}
+-
+-		/**
+-		 * @return wave part length
+-		 */
+-		public double getLength() {
+-			return length;
+-		}
+-
+-		/**
+-		 * @return amplitude used to transform the wave part
+-		 */
+-		public double getAmplitude() {
+-			return amplitude;
+-		}
+-	}
+-
+-	private final AxisConfig vertical;
+-
+-	private final AxisConfig horizontal;
+-
+-	/**
+-	 * Constructor.
+-	 * 
+-	 * @param vertical
+-	 *            config to calculate waving deltas from x axis (so to modify y
+-	 *            values), not null
+-	 * @param horizontal
+-	 *            config to calculate waving deltas from y axis (so to modify x
+-	 *            values), not null
+-	 */
+-	public Rippler(AxisConfig vertical, AxisConfig horizontal) {
+-		this.vertical = vertical;
+-		this.horizontal = horizontal;
+-	}
+-
+-	/**
+-	 * Draws a rippled (waved) variant of source into destination.
+-	 * 
+-	 * @param src
+-	 *            to be transformed, not null
+-	 * @param dest
+-	 *            to hold the result, not null
+-	 * @return dest is returned
+-	 */
+-	public BufferedImage filter(BufferedImage src, BufferedImage dest) {
+-		int width = src.getWidth();
+-		int height = src.getHeight();
+-
+-		int[] verticalDelta = calcDeltaArray(vertical, width);
+-
+-		int[] horizontalDelta = calcDeltaArray(horizontal, height);
+-
+-		for (int x = 0; x < width; x++) {
+-			for (int y = 0; y < height; y++) {
+-				int ny = (y + verticalDelta[x] + height) % height;
+-				int nx = (x + horizontalDelta[ny] + width) % width;
+-				dest.setRGB(nx, ny, src.getRGB(x, y));
+-			}
+-		}
+-
+-		return dest;
+-	}
+-
+-	/**
+-	 * Calculates wave delta array.
+-	 * 
+-	 * @param axisConfig
+-	 *            config object to transform the wave, not null
+-	 * @param num
+-	 *            number of points needed, positive
+-	 * @return the calculated num length delta array
+-	 */
+-	protected int[] calcDeltaArray(AxisConfig axisConfig, int num) {
+-		int[] delta = new int[num];
+-
+-		double start = axisConfig.getStart();
+-		double period = axisConfig.getLength() / num;
+-		double amplitude = axisConfig.getAmplitude();
+-
+-		for (int fi = 0; fi < num; fi++) {
+-			delta[fi] = (int) Math.round(amplitude
+-					* Math.sin(start + fi * period));
+-		}
+-
+-		return delta;
+-	}
+-
+-	/**
+-	 * @return vertical config, not null
+-	 */
+-	public AxisConfig getVertical() {
+-		return vertical;
+-	}
+-
+-	/**
+-	 * @return horizontal config, not null
+-	 */
+-	public AxisConfig getHorizontal() {
+-		return horizontal;
+-	}
+-}
+diff --git a/proxy/src/main/java/com/github/cage/image/ScaleConfig.java b/proxy/src/main/java/com/github/cage/image/ScaleConfig.java
+deleted file mode 100644
+index fb11551..0000000
+--- a/proxy/src/main/java/com/github/cage/image/ScaleConfig.java
++++ /dev/null
+@@ -1,65 +0,0 @@
+-/*
+- * Copyright 2011 Király Attila
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *   http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package com.github.cage.image;
+-
+-/**
+- * Used by {@link EffectConfig} to hold the scaling scalars for the captcha
+- * image.
+- * 
+- * @author akiraly
+- * 
+- */
+-public class ScaleConfig {
+-	private final float x;
+-	private final float y;
+-
+-	/**
+-	 * Constructor.
+-	 */
+-	public ScaleConfig() {
+-		this(1, 1);
+-	}
+-
+-	/**
+-	 * Constructor.
+-	 * 
+-	 * @param x
+-	 *            a value in [0f, 1f]. 1 means the captcha will fill the whole
+-	 *            width of the picture.
+-	 * @param y
+-	 *            a value in [0f, 1f]. 1 means the captcha will fill the whole
+-	 *            height of the picture.
+-	 */
+-	public ScaleConfig(float x, float y) {
+-		super();
+-		this.x = Math.min(Math.abs(x), 1);
+-		this.y = Math.min(Math.abs(y), 1);
+-	}
+-
+-	/**
+-	 * @return scale by the x axis
+-	 */
+-	public float getX() {
+-		return x;
+-	}
+-
+-	/**
+-	 * @return scale by the y axis
+-	 */
+-	public float getY() {
+-		return y;
+-	}
+-}
+diff --git a/proxy/src/main/java/com/github/cage/image/package-info.java b/proxy/src/main/java/com/github/cage/image/package-info.java
+deleted file mode 100644
+index 37fcb2c..0000000
+--- a/proxy/src/main/java/com/github/cage/image/package-info.java
++++ /dev/null
+@@ -1,21 +0,0 @@
+-/*
+- * Copyright 2011 Király Attila
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *   http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-/**
+- * Classes in this package are responsible for the actual image generation, the
+- * central class is {@link com.github.cage.image.Painter}.
+- */
+-package com.github.cage.image;
+-
+diff --git a/proxy/src/main/java/com/github/cage/package-info.java b/proxy/src/main/java/com/github/cage/package-info.java
+deleted file mode 100644
+index 2fb68a1..0000000
+--- a/proxy/src/main/java/com/github/cage/package-info.java
++++ /dev/null
+@@ -1,22 +0,0 @@
+-/*
+- * Copyright 2011 Király Attila
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *   http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-/**
+- * This is the main package of Cage, for usage example see
+- * {@link com.github.cage.Cage} or one of the predefined templates like
+- * {@link com.github.cage.GCage} or {@link com.github.cage.YCage}.
+- */
+-package com.github.cage;
+-
+diff --git a/proxy/src/main/java/com/github/cage/token/RandomCharacterGeneratorFactory.java b/proxy/src/main/java/com/github/cage/token/RandomCharacterGeneratorFactory.java
+deleted file mode 100644
+index 4b61c64..0000000
+--- a/proxy/src/main/java/com/github/cage/token/RandomCharacterGeneratorFactory.java
++++ /dev/null
+@@ -1,199 +0,0 @@
+-/*
+- * Copyright 2011 Király Attila
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *   http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package com.github.cage.token;
+-
+-import java.util.Collections;
+-import java.util.HashMap;
+-import java.util.Map;
+-import java.util.Random;
+-
+-import com.github.cage.IGenerator;
+-import com.github.cage.IGeneratorFactory;
+-
+-/**
+- * Factory that can generate {@link Character} generating {@link IGenerator}s.
+- * 
+- * @author akiraly
+- */
+-public class RandomCharacterGeneratorFactory implements
+-		IGeneratorFactory<Character> {
+-	/**
+-	 * English lower cased vowel character array.
+-	 */
+-	public static final char[] ENGLISH_VOWELS = "aeiou".toCharArray();
+-
+-	/**
+-	 * English lower cased consonant character array.
+-	 */
+-	public static final char[] ENGLISH_CONSONANTS = "bcdfghjklmnpqrstxyvz"
+-			.toCharArray();
+-
+-	/**
+-	 * Arabic numeral character array.
+-	 */
+-	public static final char[] ARABIC_NUMERALS = "0123456789".toCharArray();
+-
+-	/**
+-	 * Default character set for the default case. It contains the English lower
+-	 * cased letters.
+-	 */
+-	public static final char[] DEFAULT_DEFAULT_CHARACTER_SET = (new String(
+-			ENGLISH_VOWELS) + new String(ENGLISH_CONSONANTS)).toCharArray();
+-
+-	/**
+-	 * Special character sets for the default case.
+-	 */
+-	public static final Map<Character, char[]> DEFAULT_SPECIAL_CHARACTER_SETS = Collections
+-			.unmodifiableMap(createDefaultSpecialCharacterSets());
+-
+-	private final char[] defaultCharacterSet;
+-
+-	private final Map<Character, char[]> specialCharacterSets;
+-
+-	private final Random rnd;
+-
+-	/**
+-	 * Generates characters based on the settings of the factory. This is
+-	 * <b>not</b> thread safe!
+-	 */
+-	public class RandomCharacterGenerator implements IGenerator<Character> {
+-		private char[] currentCharacterSet = defaultCharacterSet;
+-
+-		public Character next() {
+-			char next = currentCharacterSet[rnd
+-					.nextInt(currentCharacterSet.length)];
+-
+-			if (specialCharacterSets != null) {
+-				char[] nextCharacterSet = specialCharacterSets.get(next);
+-				if (nextCharacterSet != null) {
+-					if (nextCharacterSet.length < 1) {
+-						throw new IllegalStateException(
+-								"specialCharacterSets should not hold an empty char[] value");
+-					}
+-					currentCharacterSet = nextCharacterSet;
+-				} else {
+-					currentCharacterSet = defaultCharacterSet;
+-				}
+-			}
+-
+-			return next;
+-		}
+-	}
+-
+-	/**
+-	 * Constructor.
+-	 */
+-	public RandomCharacterGeneratorFactory() {
+-		this(null);
+-	}
+-
+-	/**
+-	 * Constructor.
+-	 * 
+-	 * @param rnd
+-	 *            used to generate random numbers. Can be null.
+-	 */
+-	public RandomCharacterGeneratorFactory(Random rnd) {
+-		this(null, DEFAULT_SPECIAL_CHARACTER_SETS, rnd);
+-	}
+-
+-	/**
+-	 * Constructor.
+-	 * 
+-	 * @param defaultCharacterSet
+-	 *            used generally for character choosing, can be null.
+-	 * @param specialCharacterSets
+-	 *            map contains special cases. A (k, v) pair in this map means
+-	 *            that character k can only be immediately followed by a
+-	 *            character in v array. No value should be empty or null. The
+-	 *            map parameter itself can be null.
+-	 * @param rnd
+-	 *            used to generate random numbers. Can be null.
+-	 */
+-	public RandomCharacterGeneratorFactory(char[] defaultCharacterSet,
+-			Map<Character, char[]> specialCharacterSets, Random rnd) {
+-		this.defaultCharacterSet = defaultCharacterSet != null
+-				&& defaultCharacterSet.length > 0 ? defaultCharacterSet
+-				: DEFAULT_DEFAULT_CHARACTER_SET;
+-		this.specialCharacterSets = specialCharacterSets != null
+-				&& !specialCharacterSets.isEmpty() ? specialCharacterSets
+-				: null;
+-		this.rnd = rnd != null ? rnd : new Random();
+-	}
+-
+-	/**
+-	 * Helper function to build {@link #DEFAULT_SPECIAL_CHARACTER_SETS}. It
+-	 * contains some rules to avoid confusing character pairs. Also makes sure
+-	 * that vowels and consonants follow each other in an alternating fashion.
+-	 * 
+-	 * @return populated map
+-	 */
+-	protected static Map<Character, char[]> createDefaultSpecialCharacterSets() {
+-		Map<Character, char[]> m = new HashMap<Character, char[]>();
+-
+-		char[] con = ENGLISH_CONSONANTS;
+-		String conS = new String(con);
+-		char[] vow = ENGLISH_VOWELS;
+-		String vowS = new String(vow);
+-
+-		m.put('a', con);
+-		m.put('b', vow);
+-		m.put('c', vowS.replaceAll("o", "").toCharArray());
+-		m.put('d', vowS.replaceAll("o", "").toCharArray());
+-		m.put('e', con);
+-		m.put('f', vow);
+-		m.put('g', vow);
+-		m.put('h', vow);
+-		m.put('i', conS.replaceAll("j|l", "").toCharArray());
+-		m.put('j', vowS.replaceAll("i", "").toCharArray());
+-		m.put('k', vow);
+-		m.put('l', vowS.replaceAll("i|o", "").toCharArray());
+-		m.put('m', vow);
+-		m.put('n', vowS.replaceAll("u", "").toCharArray());
+-		m.put('o', conS.replaceAll("b|l|p", "").toCharArray());
+-		m.put('p', vow);
+-		m.put('q', vowS.replaceAll("o", "").toCharArray());
+-		m.put('r', vowS.replaceAll("u", "").toCharArray());
+-		m.put('s', vow);
+-		m.put('t', vow);
+-		m.put('u', con);
+-		m.put('v', vow);
+-		m.put('w', vow);
+-		m.put('x', vow);
+-		m.put('y', vow);
+-		m.put('z', vow);
+-
+-		return m;
+-	}
+-
+-	public IGenerator<Character> next() {
+-		return new RandomCharacterGenerator();
+-	}
+-
+-	/**
+-	 * @return default character set for character generation, not null
+-	 */
+-	public char[] getDefaultCharacterSet() {
+-		return defaultCharacterSet;
+-	}
+-
+-	/**
+-	 * @return map holding the special rules for each character, can be null
+-	 */
+-	public Map<Character, char[]> getSpecialCharacterSets() {
+-		return specialCharacterSets;
+-	}
+-}
+diff --git a/proxy/src/main/java/com/github/cage/token/RandomTokenGenerator.java b/proxy/src/main/java/com/github/cage/token/RandomTokenGenerator.java
+deleted file mode 100644
+index 5c9491a..0000000
+--- a/proxy/src/main/java/com/github/cage/token/RandomTokenGenerator.java
++++ /dev/null
+@@ -1,151 +0,0 @@
+-/*
+- * Copyright 2011 Király Attila
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *   http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package com.github.cage.token;
+-
+-import java.util.Random;
+-
+-import com.github.cage.IGenerator;
+-import com.github.cage.IGeneratorFactory;
+-
+-/**
+- * A simple random String generator that can be used to generate tokens for the
+- * captcha images.
+- * 
+- * In its default mode instances of this class generate words from English lower
+- * cased letters where vowels and consonants are alternating.
+- * 
+- * @author akiraly
+- */
+-public class RandomTokenGenerator implements IGenerator<String> {
+-
+-	/**
+-	 * Default minimum length of token.
+-	 */
+-	protected static final int DEFAULT_TOKEN_LEN_MIN = 8;
+-
+-	/**
+-	 * Default maximum length of token is {@link #DEFAULT_TOKEN_LEN_MIN} +
+-	 * {@value #DEFAULT_TOKEN_LEN_DELTA}.
+-	 */
+-	protected static final int DEFAULT_TOKEN_LEN_DELTA = 2;
+-
+-	private final IGeneratorFactory<Character> characterGeneratorFactory;
+-	private final int minLength;
+-	private final int delta;
+-	private final Random rnd;
+-
+-	/**
+-	 * Constructor.
+-	 */
+-	public RandomTokenGenerator() {
+-		this(null);
+-	}
+-
+-	/**
+-	 * Constructor.
+-	 * 
+-	 * @param rnd
+-	 *            random generator to be used, can be null
+-	 */
+-	public RandomTokenGenerator(Random rnd) {
+-		this(rnd, DEFAULT_TOKEN_LEN_MIN, DEFAULT_TOKEN_LEN_DELTA);
+-	}
+-
+-	/**
+-	 * Constructor.
+-	 * 
+-	 * @param length
+-	 *            the length of the generated words, must be > 0
+-	 * @param rnd
+-	 *            random generator to be used, can be null
+-	 */
+-	public RandomTokenGenerator(Random rnd, int length) {
+-		this(rnd, length, 0);
+-	}
+-
+-	/**
+-	 * Constructor.
+-	 * 
+-	 * @param rnd
+-	 *            random generator to be used, can be null
+-	 * @param minLength
+-	 *            the minimum length of the generated words, must be > 0
+-	 * @param delta
+-	 *            minLength + delta is the maximum length of the generated
+-	 *            words, delta must be >= 0
+-	 */
+-	public RandomTokenGenerator(Random rnd, int minLength, int delta) {
+-		this(rnd, new RandomCharacterGeneratorFactory(rnd != null ? rnd
+-				: new Random()), minLength, delta);
+-	}
+-
+-	/**
+-	 * Constructor.
+-	 * 
+-	 * @param rnd
+-	 *            random generator to be used, can be null
+-	 * @param characterGeneratorFactory
+-	 *            character generator factory to be used for the actual
+-	 *            character creation, can be null
+-	 * @param minLength
+-	 *            the minimum length of the generated words, must be > 0
+-	 * @param delta
+-	 *            minLength + delta is the maximum length of the generated
+-	 *            words, delta must be >= 0
+-	 */
+-	public RandomTokenGenerator(Random rnd,
+-			IGeneratorFactory<Character> characterGeneratorFactory,
+-			int minLength, int delta) {
+-		this.characterGeneratorFactory = characterGeneratorFactory != null ? characterGeneratorFactory
+-				: new RandomCharacterGeneratorFactory();
+-		this.minLength = Math.abs(minLength);
+-		this.delta = Math.abs(delta);
+-		this.rnd = rnd != null ? rnd : new Random();
+-	}
+-
+-	public String next() {
+-		int length = (delta <= 1 ? 0 : rnd.nextInt(delta) + 1) + minLength;
+-		char[] word = new char[length];
+-		IGenerator<Character> generator = characterGeneratorFactory.next();
+-
+-		for (int fi = 0; fi < word.length; fi++) {
+-			word[fi] = generator.next();
+-		}
+-
+-		return new String(word);
+-	}
+-
+-	/**
+-	 * @return character generator factory used by this class, not null
+-	 */
+-	public IGeneratorFactory<Character> getCharacterGeneratorFactory() {
+-		return characterGeneratorFactory;
+-	}
+-
+-	/**
+-	 * @return minimum length of generated tokens
+-	 */
+-	public int getMinLength() {
+-		return minLength;
+-	}
+-
+-	/**
+-	 * @return maximum length difference to add to the minimum length
+-	 */
+-	public int getDelta() {
+-		return delta;
+-	}
+-}
+diff --git a/proxy/src/main/java/com/github/cage/token/package-info.java b/proxy/src/main/java/com/github/cage/token/package-info.java
+deleted file mode 100644
+index 4310422..0000000
+--- a/proxy/src/main/java/com/github/cage/token/package-info.java
++++ /dev/null
+@@ -1,21 +0,0 @@
+-/*
+- * Copyright 2011 Király Attila
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *   http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-/**
+- * Classes in this package are responsible for token generation, the
+- * central class is {@link com.github.cage.token.RandomTokenGenerator}.
+- */
+-package com.github.cage.token;
+-
+diff --git a/proxy/src/main/java/nl/captcha/Captcha.java b/proxy/src/main/java/nl/captcha/Captcha.java
+new file mode 100644
+index 0000000..686f06d
+--- /dev/null
++++ b/proxy/src/main/java/nl/captcha/Captcha.java
+@@ -0,0 +1,239 @@
++package nl.captcha;
++
++import java.awt.AlphaComposite;
++import java.awt.Color;
++import java.awt.Graphics2D;
++import java.awt.image.BufferedImage;
++import java.io.IOException;
++import java.io.ObjectInputStream;
++import java.io.ObjectOutputStream;
++import java.io.Serializable;
++
++import javax.imageio.ImageIO;
++
++import nl.captcha.backgrounds.BackgroundProducer;
++import nl.captcha.backgrounds.GradiatedBackgroundProducer;
++import nl.captcha.noise.CurvedLineNoiseProducer;
++import nl.captcha.noise.NoiseProducer;
++import nl.captcha.text.producer.DefaultTextProducer;
++import nl.captcha.text.producer.TextProducer;
++import nl.captcha.text.renderer.DefaultWordRenderer;
++import nl.captcha.text.renderer.WordRenderer;
++
++
++/**
++ * A builder for generating a CAPTCHA image/answer pair.
++ * 
++ * <p>
++ * Example for generating a new CAPTCHA:
++ * </p>
++ * <pre>Captcha captcha = new Captcha.Builder(200, 50)
++ * 	.addText()
++ * 	.addBackground()
++ * 	.build();</pre>
++ * <p>Note that the <code>build()</code> must always be called last. Other methods are optional,
++ * and can sometimes be repeated. For example:</p>
++ * <pre>Captcha captcha = new Captcha.Builder(200, 50)
++ * 	.addText()
++ * 	.addNoise()
++ * 	.addNoise()
++ * 	.addNoise()
++ * 	.addBackground()
++ * 	.build();</pre>
++ * <p>Adding multiple backgrounds has no affect; the last background added will simply be the
++ * one that is eventually rendered.</p>
++ * <p>To validate that <code>answerStr</code> is a correct answer to the CAPTCHA:</p>
++ * 
++ * <code>captcha.isCorrect(answerStr);</code>
++ * 
++ * @author <a href="mailto:james.childers@gmail.com">James Childers</a>
++ * v
++ */
++public final class Captcha implements Serializable {
++
++    private static final long serialVersionUID = 617511236L;
++    public static final String NAME = "simpleCaptcha";
++    private Builder _builder;
++
++    private Captcha(Builder builder) {
++        _builder = builder;
++    }
++
++    public static class Builder implements Serializable {
++        private static final long serialVersionUID = 1L;
++        /**
++         * @serial
++         */
++        private String _answer = "";
++        /**
++         * @serial
++         */
++        private BufferedImage _img;
++        /**
++         * @serial
++         */
++        private BufferedImage _bg;
++        private boolean _addBorder = false;
++
++        public Builder(int width, int height) {
++            _img = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
++        }
++
++        /**
++         * Add a background using the default BackgroundProducer.
++         * 
++         * @return
++         */
++        public Builder addBackground() {
++            return addBackground(new GradiatedBackgroundProducer());
++        }
++
++        /**
++         * Add a background using the given BackgroundProducer.
++         * 
++         * @param bgProd
++         * @return
++         */
++        public Builder addBackground(BackgroundProducer bgProd) {
++        	_bg = bgProd.getBackground(_img.getWidth(), _img.getHeight());
++            
++            return this;
++        }
++
++        /**
++         * Add text to the image using the default TextProducer
++         * 
++         * @return
++         */
++        public Builder addText() {
++            return addText(new DefaultTextProducer());
++        }
++
++        /**
++         * Add text to the image using the given TextProducer
++         * 
++         * @param txtProd
++         * @return
++         */
++        public Builder addText(TextProducer txtProd) {
++            return addText(txtProd, new DefaultWordRenderer());
++        }
++        
++        /**
++         * Display the answer on the image using the given WordRenderer.
++         *  
++         * @param wRenderer
++         * @return
++         */
++        public Builder addText(WordRenderer wRenderer) {
++        	return addText(new DefaultTextProducer(), wRenderer);
++        }
++        
++        public Builder addText(TextProducer txtProd, WordRenderer wRenderer) {
++        	_answer += txtProd.getText();
++        	wRenderer.render(_answer, _img);
++        	
++        	return this;
++        }
++
++        /**
++         * Add noise using the default NoiseProducer.
++         * 
++         * @return
++         */
++        public Builder addNoise() {
++            return this.addNoise(new CurvedLineNoiseProducer());
++        }
++
++        /**
++         * Add noise using the given NoiseProducer.
++         * 
++         * @param nProd
++         * @return
++         */
++        public Builder addNoise(NoiseProducer nProd) {
++            nProd.makeNoise(_img);
++            return this;
++        }
++
++        /**
++         * Draw a single-pixel wide black border around the image.
++         * 
++         * @return
++         */
++        public Builder addBorder() {
++        	_addBorder = true;
++
++            return this;
++        }
++
++        /**
++         * Build the CAPTCHA. This method should always be called, and should always
++         * be called last.
++         * 
++         * @return
++         */
++        public Captcha build() {
++        	// Paint the main image over the background
++        	Graphics2D g = _bg.createGraphics();
++        	g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 1.0f));
++        	g.drawImage(_img, null, null);
++        	
++        	// Add the border, if necessary
++        	if (_addBorder) {
++        		int width = _img.getWidth();
++        		int height = _img.getHeight();
++        		
++	            g.setColor(Color.BLACK);
++	            g.drawLine(0, 0, 0, width);
++	            g.drawLine(0, 0, width, 0);
++	            g.drawLine(0, height - 1, width, height - 1);
++	            g.drawLine(width - 1, height - 1, width - 1, 0);
++        	}
++
++        	_img = _bg;
++        	
++            return new Captcha(this);
++        }
++
++        @Override
++        public String toString() {
++            StringBuffer sb = new StringBuffer();
++            sb.append("[Answer: ");
++            sb.append(_answer);
++            sb.append("][Image: ");
++            sb.append(_img);
++            sb.append("]");
++
++            return sb.toString();
++        }
++        
++        private void writeObject(ObjectOutputStream out) throws IOException {
++            out.writeObject(_answer);
++            ImageIO.write(_img, "png", ImageIO.createImageOutputStream(out));
++        }
++
++        private void readObject(ObjectInputStream in) throws IOException,
++                ClassNotFoundException {
++            _answer = (String) in.readObject();
++            _img = ImageIO.read(ImageIO.createImageInputStream(in));
++        }
++    }
++
++    public boolean isCorrect(String answer) {
++        return _builder._answer.equals(answer);
++    }
++    
++    public String getAnswer() {
++    	return _builder._answer;
++    }
++
++    public BufferedImage getImage() {
++        return _builder._img;
++    }
++
++    @Override
++    public String toString() {
++        return _builder.toString();
++    }
++}
+\ No newline at end of file
+diff --git a/proxy/src/main/java/nl/captcha/CaptchaBean.java b/proxy/src/main/java/nl/captcha/CaptchaBean.java
+new file mode 100644
+index 0000000..266b178
+--- /dev/null
++++ b/proxy/src/main/java/nl/captcha/CaptchaBean.java
+@@ -0,0 +1,111 @@
++package nl.captcha;
++
++import java.awt.AlphaComposite;
++import java.awt.Color;
++import java.awt.Graphics2D;
++import java.awt.image.BufferedImage;
++
++import nl.captcha.backgrounds.BackgroundProducer;
++import nl.captcha.backgrounds.GradiatedBackgroundProducer;
++import nl.captcha.noise.NoiseProducer;
++import nl.captcha.text.producer.TextProducer;
++import nl.captcha.text.renderer.DefaultWordRenderer;
++import nl.captcha.text.renderer.WordRenderer;
++
++
++/**
++ * Simple CAPTCHA bean intended to be used by Spring.
++ * 
++ * @author <a href="mailto:james.childers@gmail.com">James
++ *
++ */
++public class CaptchaBean {
++	private BackgroundProducer _bgProd = new GradiatedBackgroundProducer();
++	private TextProducer _txtProd;
++	private NoiseProducer _noiseProd;
++	private boolean _addBorder = false;
++	
++	private String _answer = "";
++	private BufferedImage _img;
++	private BufferedImage _bg;
++	
++	public CaptchaBean(int width, int height) {
++		_img = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
++	}
++	
++	public CaptchaBean build() {
++		// Add and render the text
++		if (_txtProd != null) {
++			_answer += _txtProd.getText();
++			WordRenderer wr = new DefaultWordRenderer();
++			wr.render(_answer, _img);
++		}
++		
++		if (_noiseProd != null) {
++			_noiseProd.makeNoise(_img);
++		}
++		
++		
++		_bg = _bgProd.getBackground(_img.getWidth(), _img.getHeight());
++		
++    	// Paint the main image over the background
++    	Graphics2D g = _bg.createGraphics();
++    	g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 1.0f));
++    	g.drawImage(_img, null, null);
++    	
++    	// Add the border, if necessary
++    	if (_addBorder) {
++    		int width = _img.getWidth();
++    		int height = _img.getHeight();
++    		
++            g.setColor(Color.BLACK);
++            g.drawLine(0, 0, 0, width);
++            g.drawLine(0, 0, width, 0);
++            g.drawLine(0, height - 1, width, height - 1);
++            g.drawLine(width - 1, height - 1, width - 1, 0);
++    	}
++    	_img = _bg;
++    	g.dispose();
++		
++		return this;
++	}
++	
++	public boolean isCorrect(String answer) {
++		return answer.equals(_answer);
++	}
++	
++	public BufferedImage getImage() {
++		return _img;
++	}
++	
++	public BackgroundProducer getBgProd() {
++		return _bgProd;
++	}
++	public void setBgProd(BackgroundProducer bgProd) {
++		_bgProd = bgProd;
++	}
++	public TextProducer getTxtProd() {
++		return _txtProd;
++	}
++	public void setTxtProd(TextProducer txtProd) {
++		_txtProd = txtProd;
++	}
++	public NoiseProducer getNoiseProd() {
++		return _noiseProd;
++	}
++	public void setNoiseProd(NoiseProducer noiseProd) {
++		_noiseProd = noiseProd;
++	}
++	public boolean isAddBorder() {
++		return _addBorder;
++	}
++	public void setAddBorder(boolean addBorder) {
++		_addBorder = addBorder;
++	}
++	public String getAnswer() {
++		return _answer;
++	}
++	public void setAnswer(String answer) {
++		_answer = answer;
++	}
++}
+diff --git a/proxy/src/main/java/nl/captcha/backgrounds/BackgroundProducer.java b/proxy/src/main/java/nl/captcha/backgrounds/BackgroundProducer.java
+new file mode 100644
+index 0000000..8113ace
+--- /dev/null
++++ b/proxy/src/main/java/nl/captcha/backgrounds/BackgroundProducer.java
+@@ -0,0 +1,21 @@
++package nl.captcha.backgrounds;
++
++import java.awt.image.BufferedImage;
++
++/**
++ * 
++ * @author <a href="mailto:james.childers@gmail.com">James Childers</a>
++ * 
++ */
++public interface BackgroundProducer {
++
++    /**
++     * Add the background to the given image.
++     * 
++     * @param image
++     * @return
++     */
++    public BufferedImage addBackground(BufferedImage image);
++    
++    public BufferedImage getBackground(int width, int height);
++}
+diff --git a/proxy/src/main/java/nl/captcha/backgrounds/GradiatedBackgroundProducer.java b/proxy/src/main/java/nl/captcha/backgrounds/GradiatedBackgroundProducer.java
+new file mode 100644
+index 0000000..8dd2fa6
+--- /dev/null
++++ b/proxy/src/main/java/nl/captcha/backgrounds/GradiatedBackgroundProducer.java
+@@ -0,0 +1,64 @@
++package nl.captcha.backgrounds;
++
++import java.awt.Color;
++import java.awt.GradientPaint;
++import java.awt.Graphics2D;
++import java.awt.RenderingHints;
++import java.awt.geom.Rectangle2D;
++import java.awt.image.BufferedImage;
++
++/**
++ * Creates a gradiated background with the given <i>from</i> and <i>to</i>
++ * Color values. If none are specified they default to light gray and white
++ * respectively.
++ * 
++ * @author <a href="mailto:james.childers@gmail.com">James Childers</a>
++ * 
++ */
++public class GradiatedBackgroundProducer implements BackgroundProducer {
++
++    private Color _fromColor = Color.YELLOW;
++    private Color _toColor = Color.WHITE;
++    
++    public BufferedImage getBackground(int width, int height) {
++        // create an opaque image
++        BufferedImage img = new BufferedImage(width, height,
++                BufferedImage.TYPE_INT_RGB);
++
++        Graphics2D g = img.createGraphics();
++        RenderingHints hints = new RenderingHints(
++                RenderingHints.KEY_ANTIALIASING,
++                RenderingHints.VALUE_ANTIALIAS_ON);
++
++        g.setRenderingHints(hints);
++
++        // create the gradient color
++        GradientPaint ytow = new GradientPaint(0, 0, _fromColor, width, height,
++                _toColor);
++
++        g.setPaint(ytow);
++        // draw gradient color
++        g.fill(new Rectangle2D.Double(0, 0, width, height));
++
++        // draw the transparent image over the background
++        g.drawImage(img, 0, 0, null);
++        g.dispose();
++
++        return img;
++    }
++
++    public BufferedImage addBackground(BufferedImage image) {
++        int width = image.getWidth();
++        int height = image.getHeight();
++        
++        return getBackground(width, height);
++    }
++
++    public void setFromColor(Color fromColor) {
++        _fromColor = fromColor;
++    }
++
++    public void setToColor(Color toColor) {
++        _toColor = toColor;
++    }
++}
+diff --git a/proxy/src/main/java/nl/captcha/noise/CurvedLineNoiseProducer.java b/proxy/src/main/java/nl/captcha/noise/CurvedLineNoiseProducer.java
+new file mode 100644
+index 0000000..5f62bab
+--- /dev/null
++++ b/proxy/src/main/java/nl/captcha/noise/CurvedLineNoiseProducer.java
+@@ -0,0 +1,87 @@
++package nl.captcha.noise;
++
++import java.awt.BasicStroke;
++import java.awt.Color;
++import java.awt.Graphics2D;
++import java.awt.RenderingHints;
++import java.awt.geom.CubicCurve2D;
++import java.awt.geom.PathIterator;
++import java.awt.geom.Point2D;
++import java.awt.image.BufferedImage;
++import java.security.SecureRandom;
++import java.util.Random;
++
++/**
++ * Adds a randomly curved line to the image.
++ * 
++ * @author <a href="mailto:james.childers@gmail.com">James Childers</a>
++ * 
++ */
++public class CurvedLineNoiseProducer implements NoiseProducer {
++
++    private static final Random RAND = new SecureRandom();
++
++    private final Color _color;
++    private final float _width;
++
++    public CurvedLineNoiseProducer() {
++        this(Color.GREEN, 2.5f);
++    }
++
++    public CurvedLineNoiseProducer(Color color, float width) {
++        _color = color;
++        _width = width;
++    }
++
++    public void makeNoise(BufferedImage image) {
++        int width = image.getWidth();
++        int height = image.getHeight();
++
++        // the curve from where the points are taken
++        CubicCurve2D cc = new CubicCurve2D.Float(width * .1f, height
++                * RAND.nextFloat(), width * .1f, height
++                * RAND.nextFloat(), width * .25f, height
++                * RAND.nextFloat(), width * .9f, height
++                * RAND.nextFloat());
++
++        // creates an iterator to define the boundary of the flattened curve
++        PathIterator pi = cc.getPathIterator(null, 2);
++        Point2D tmp[] = new Point2D[200];
++        int i = 0;
++
++        // while pi is iterating the curve, adds points to tmp array
++        while (!pi.isDone()) {
++            float[] coords = new float[6];
++            switch (pi.currentSegment(coords)) {
++            case PathIterator.SEG_MOVETO:
++            case PathIterator.SEG_LINETO:
++                tmp[i] = new Point2D.Float(coords[0], coords[1]);
++            }
++            i++;
++            pi.next();
++        }
++
++        // the points where the line changes the stroke and direction
++        Point2D[] pts = new Point2D[i];
++        // copies points from tmp to pts
++        System.arraycopy(tmp, 0, pts, 0, i);
++
++        Graphics2D graph = (Graphics2D) image.getGraphics();
++        graph.setRenderingHints(new RenderingHints(
++                RenderingHints.KEY_ANTIALIASING,
++                RenderingHints.VALUE_ANTIALIAS_ON));
++
++        graph.setColor(_color);
++
++        // for the maximum 3 point change the stroke and direction
++        for (i = 0; i < pts.length - 1; i++) {
++            if (i < 3) {
++            	graph.setStroke(new BasicStroke(_width));
++            }
++            graph.drawLine((int) pts[i].getX(), (int) pts[i].getY(),
++                    (int) pts[i + 1].getX(), (int) pts[i + 1].getY());
++        }
++
++        graph.dispose();
++    }
++}
+diff --git a/proxy/src/main/java/nl/captcha/noise/NoiseProducer.java b/proxy/src/main/java/nl/captcha/noise/NoiseProducer.java
+new file mode 100644
+index 0000000..633be17
+--- /dev/null
++++ b/proxy/src/main/java/nl/captcha/noise/NoiseProducer.java
+@@ -0,0 +1,11 @@
++package nl.captcha.noise;
++
++import java.awt.image.BufferedImage;
++
++/**
++ * @author <a href="mailto:james.childers@gmail.com">James Childers</a>
++ * 
++ */
++public interface NoiseProducer {
++    public void makeNoise(BufferedImage image);
++}
+diff --git a/proxy/src/main/java/nl/captcha/text/producer/DefaultTextProducer.java b/proxy/src/main/java/nl/captcha/text/producer/DefaultTextProducer.java
+new file mode 100644
+index 0000000..3bf37d7
+--- /dev/null
++++ b/proxy/src/main/java/nl/captcha/text/producer/DefaultTextProducer.java
+@@ -0,0 +1,56 @@
++package nl.captcha.text.producer;
++
++import java.security.SecureRandom;
++import java.util.Random;
++
++/**
++ * Produces text of a given length from a given array of characters. The default (no-args)
++ * constructor produces five Latin characters from a specific set of alphanumerics. Characters
++ * such as "1" (one) and "l" (lower-case 'ell') have been removed to reduce ambiguity in the
++ * generated CAPTCHA.
++ * 
++ * @author <a href="mailto:james.childers@gmail.com">James Childers</a>
++ * 
++ */
++public class DefaultTextProducer implements TextProducer {
++
++    private static final Random _gen = new SecureRandom();
++    private static final int DEFAULT_LENGTH = 5;
++    private static final char[] DEFAULT_CHARS = new char[] { 'a', 'b', 'c', 'd',
++            'e', 'f', 'g', 'h', 'k', 'm', 'n', 'p', 'r', 'w', 'x', 'y',
++            '1','9','2', '3', '4', '5', '6', '7', '8', };
++    
++    private final int _length;
++    private final char[] _srcChars;
++
++    public DefaultTextProducer() {
++    	this(DEFAULT_LENGTH, DEFAULT_CHARS);
++    }
++    
++    public DefaultTextProducer(int length) {
++    	this(length, DEFAULT_CHARS);
++    }
++    
++    public DefaultTextProducer(int length, char[] srcChars) {
++    	_length = length;
++    	_srcChars = srcChars != null ? copyOf(srcChars, srcChars.length) : DEFAULT_CHARS;
++    }
++    
++    public String getText() {
++        int car = _srcChars.length - 1;
++
++        String capText = "";
++        for (int i = 0; i < _length; i++) {
++            capText += _srcChars[_gen.nextInt(car) + 1];
++        }
++
++        return capText;
++    }
++    
++    public static char[] copyOf(char[] original, int newLength) {
++        char[] copy = new char[newLength];
++        System.arraycopy(original, 0, copy, 0,
++                         Math.min(original.length, newLength));
++        return copy;
++    }
++}
+diff --git a/proxy/src/main/java/nl/captcha/text/producer/TextProducer.java b/proxy/src/main/java/nl/captcha/text/producer/TextProducer.java
+new file mode 100644
+index 0000000..cb7f18d
+--- /dev/null
++++ b/proxy/src/main/java/nl/captcha/text/producer/TextProducer.java
+@@ -0,0 +1,16 @@
++package nl.captcha.text.producer;
++
++
++/**
++ * @author <a href="mailto:james.childers@gmail.com">James Childers</a>
++ * 
++ */
++public interface TextProducer {
++
++    /**
++     * Generate a series of characters.
++     * 
++     * @return
++     */
++    public String getText();
++}
+diff --git a/proxy/src/main/java/nl/captcha/text/renderer/DefaultWordRenderer.java b/proxy/src/main/java/nl/captcha/text/renderer/DefaultWordRenderer.java
+new file mode 100644
+index 0000000..0958c77
+--- /dev/null
++++ b/proxy/src/main/java/nl/captcha/text/renderer/DefaultWordRenderer.java
+@@ -0,0 +1,79 @@
++package nl.captcha.text.renderer;
++
++import java.awt.Color;
++import java.awt.Font;
++import java.awt.Graphics2D;
++import java.awt.RenderingHints;
++import java.awt.font.FontRenderContext;
++import java.awt.font.GlyphVector;
++import java.awt.image.BufferedImage;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Random;
++
++/**
++ * Render a word using the given color and from a randomly selected font chosen from 
++ * a list of fonts given in the constructor.
++ * 
++ * @author <a href="mailto:james.childers@gmail.com">James Childers</a>
++ */
++public class DefaultWordRenderer implements WordRenderer {
++
++	private static final Color DEFAULT_COLOR = Color.RED;
++	private static final List<Font> DEFAULT_FONTS = new ArrayList<Font>();
++    
++    private final Color _color;
++    private final List<Font> _fonts;
++    
++    static {
++    	DEFAULT_FONTS.add(new Font("Arial", Font.BOLD, 55));
++        DEFAULT_FONTS.add(new Font("Courier", Font.BOLD, 55));	
++    }
++    
++    /**
++     * Will render the characters in black and in either 40pt Arial or Courier.
++     */
++    public DefaultWordRenderer() {
++    	this(DEFAULT_COLOR, DEFAULT_FONTS);
++    }
++    
++    public DefaultWordRenderer(Color color, List<Font> fonts) {
++    	_color = color != null ? color : DEFAULT_COLOR;
++    	_fonts = fonts != null ? fonts : DEFAULT_FONTS;
++    }
++
++    /**
++     * Render a word onto a BufferedImage.
++     * 
++     * @param word The word to be rendered.
++     * @param image The BufferedImage onto which the word will be painted on to
++     */
++    public void render(String word, BufferedImage image) {
++        Graphics2D g = image.createGraphics();
++
++        RenderingHints hints = new RenderingHints(
++                RenderingHints.KEY_ANTIALIASING,
++                RenderingHints.VALUE_ANTIALIAS_ON);
++        hints.add(new RenderingHints(RenderingHints.KEY_RENDERING,
++                RenderingHints.VALUE_RENDER_QUALITY));
++        g.setRenderingHints(hints);
++        g.setColor(_color);
++        FontRenderContext frc = g.getFontRenderContext();
++
++        int startPosX = image.getWidth() / 10;
++        char[] wc = word.toCharArray();
++        Random generator = new Random();
++        for (char element : wc) {
++            char[] itchar = new char[] { element };
++            int choiceFont = generator.nextInt(_fonts.size());
++            Font itFont = _fonts.get(choiceFont);
++            g.setFont(itFont);
++
++            GlyphVector gv = itFont.createGlyphVector(frc, itchar);
++            double charWitdth = gv.getVisualBounds().getWidth();
++
++            g.drawChars(itchar, 0, itchar.length, startPosX, (int) (image.getHeight() + gv.getVisualBounds().getHeight())/2);
++            startPosX = startPosX + (int) charWitdth + 1;
++        }
++    }
++}
+diff --git a/proxy/src/main/java/nl/captcha/text/renderer/WordRenderer.java b/proxy/src/main/java/nl/captcha/text/renderer/WordRenderer.java
+new file mode 100644
+index 0000000..6434d03
+--- /dev/null
++++ b/proxy/src/main/java/nl/captcha/text/renderer/WordRenderer.java
+@@ -0,0 +1,23 @@
++package nl.captcha.text.renderer;
++
++import java.awt.image.BufferedImage;
++
++/**
++ * @author <a href="mailto:james.childers@gmail.com">James Childers</a>
++ * 
++ */
++public interface WordRenderer {
++    /**
++     * Render a word to a BufferedImage.
++     * 
++     * @param word
++     *            The word to be rendered.
++     * @param width
++     *            The width of the image to be created.
++     * @param height
++     *            The height of the image to be created.
++     * @return The BufferedImage created from the word.
++     */
++    public void render(String word, BufferedImage image);
++
++}
+diff --git a/proxy/src/main/java/ru/yooxa/bungee/connection/CaptchaBridge.java b/proxy/src/main/java/ru/yooxa/bungee/connection/CaptchaBridge.java
+index a88f4e8..f1fde1c 100644
+--- a/proxy/src/main/java/ru/yooxa/bungee/connection/CaptchaBridge.java
++++ b/proxy/src/main/java/ru/yooxa/bungee/connection/CaptchaBridge.java
+@@ -3,6 +3,7 @@ package ru.yooxa.bungee.connection;
+ import io.netty.buffer.ByteBuf;
+ import io.netty.channel.Channel;
+ 
++import java.util.ArrayList;
+ import java.util.Iterator;
+ import java.util.Map;
+ import java.util.Random;
+@@ -33,12 +34,14 @@ import com.google.common.base.Preconditions;
+ public class CaptchaBridge extends PacketHandler {
+ 
+     private static final Random random = new Random();
++    public static ArrayList<String> strings = new ArrayList<String>();
+     private static String TIMEOUT;
+     private static String ENTER_CAPTCHA;
+     private static String INVALID;
+     private final UserConnection con;
+     private boolean settings;
+-    private int captcha = getRandomCaptcha();
++    private int captchaId = 0;
++    private String captcha = null;
+     private static Map<UserConnection, CaptchaBridge> connections = new ConcurrentHashMap<UserConnection, CaptchaBridge>();
+     private static SqlStorage sql;
+     private static AtomicInteger a = new AtomicInteger();
+@@ -53,7 +56,7 @@ public class CaptchaBridge extends PacketHandler {
+ 
+         try {
+             CaptchaGenerator captchagenerator = new CaptchaGenerator();
+-            captchagenerator.generate(CaptchaBridge.sql.threads, SqlStorage.minCaptcha, SqlStorage.maxCaptcha);
++            captchagenerator.generate(CaptchaBridge.sql.threads, SqlStorage.maxCaptcha);
+         } catch (Exception exception) {
+             System.out.println("Exception while generate maps");
+             exception.printStackTrace();
+@@ -85,9 +88,8 @@ public class CaptchaBridge extends PacketHandler {
+     }
+ 
+     private void connected() {
+-        int protocol = this.con.getPendingConnection().getHandshake().getProtocolVersion();
+         Channel channel = this.con.getCh().getHandle();
+-
++        int protocol = this.con.getPendingConnection().getHandshake().getProtocolVersion();
+         this.con.setClientEntityId(-1);
+         byte id1;
+         byte id2;
+@@ -116,7 +118,6 @@ public class CaptchaBridge extends PacketHandler {
+         this.write(channel, Connection.playerPosition, protocol, id3);
+         this.resetCaptcha();
+         CaptchaBridge.connections.put(this.con, this);
+-
+     }
+ 
+     private void write(Channel channel, DefinedPacket packet, int protocol, int id) {
+@@ -163,8 +164,9 @@ public class CaptchaBridge extends PacketHandler {
+         int protocol = this.con.getPendingConnection().getHandshake().getProtocolVersion();
+         Channel channel = this.con.getCh().getHandle();
+ 
+-        this.captcha = getRandomCaptcha();
+-        this.write(channel, Connection.getCaptcha(this.captcha, protocol));
++        this.captchaId = getRandomCaptcha();
++        this.captcha = strings.get(captchaId);
++        this.write(channel, Connection.getCaptcha(this.captchaId, protocol));
+         channel.flush();
+     }
+ 
+@@ -173,7 +175,7 @@ public class CaptchaBridge extends PacketHandler {
+     }
+ 
+     private static int getRandomCaptcha() {
+-        return CaptchaBridge.random.nextInt(CaptchaGenerator.max - CaptchaGenerator.min) + CaptchaGenerator.min;
++        return random.nextInt(strings.size());
+     }
+ 
+     public void handle(Chat chat) throws Exception {
+@@ -196,6 +198,7 @@ public class CaptchaBridge extends PacketHandler {
+         }
+     }
+ 
++    @SuppressWarnings("deprecation")
+     private void finish() {
+         this.con.serverr = true;
+         ((HandlerBoss) this.con.getCh().getHandle().pipeline().get(HandlerBoss.class)).setHandler(new UpstreamBridge(ProxyServer.getInstance(), this.con));
+@@ -250,18 +253,18 @@ public class CaptchaBridge extends PacketHandler {
+             public void run() {
+                 while (true) {
+                     try {
+-                        Thread.sleep(5000L);
++                        Thread.sleep(3000L);
+                     } catch (InterruptedException interruptedexception) {
+                         interruptedexception.printStackTrace();
+                     }
+                     int i = CaptchaBridge.a.get();
+                     if (i > 0) {
+-                        System.out.println("[Captcha] Подлючений в течении 5 секунд - " + i);
++                        System.out.print("[Captcha] Подключений в течении 5 секунд - "+i);
+                     }
+                     CaptchaBridge.a.set(0);
+                 }
+ 
+             }
+-        }, "Captcha ConnectionsCounter")).start();
++        }, "Captcha Connections Counter")).start();
+     }
+ }
+diff --git a/proxy/src/main/java/ru/yooxa/bungee/connection/CaptchaGenerator.java b/proxy/src/main/java/ru/yooxa/bungee/connection/CaptchaGenerator.java
+index 93ef244..fc1f412 100644
+--- a/proxy/src/main/java/ru/yooxa/bungee/connection/CaptchaGenerator.java
++++ b/proxy/src/main/java/ru/yooxa/bungee/connection/CaptchaGenerator.java
+@@ -1,43 +1,48 @@
+ package ru.yooxa.bungee.connection;
+ 
+-import com.github.cage.GCage;
+-import net.md_5.bungee.BungeeCord;
+ import io.netty.buffer.ByteBuf;
+-import java.awt.image.BufferedImage;
++
+ import java.util.concurrent.ExecutorService;
+ import java.util.concurrent.Executors;
+ import java.util.concurrent.atomic.AtomicInteger;
++
++import net.md_5.bungee.BungeeCord;
+ import net.md_5.bungee.protocol.packet.extra.MapDataPacket;
++import nl.captcha.Captcha;
++import nl.captcha.backgrounds.GradiatedBackgroundProducer;
++import nl.captcha.text.producer.DefaultTextProducer;
++
+ import org.bukkit.map.CraftMapCanvas;
+ import org.bukkit.map.MapPalette;
++
++import ru.yooxa.database.SqlStorage;
+ import ru.yooxa.ycore.Connection;
+ import ru.yooxa.ycore.GenerateTask;
+ 
+ public class CaptchaGenerator {
+ 
+-    public static int min = 100;
+     public static int max = 999;
+     private AtomicInteger count = new AtomicInteger();
+-    private static final GCage localGCage = new GCage();
+ 
+-    public void generate(int threads, int min, int max) throws Exception {
+-        Connection.min = min;
+-        CaptchaGenerator.min = min;
++    public void generate(int threads, int max) throws Exception {
+         CaptchaGenerator.max = max;
+         BungeeCord.getInstance().getLogger().info("§cГенерирую капчу");
+         long start = System.currentTimeMillis();
+-        int all = max - min + 1;
++        for (int in = 0; in < max; in++) {
++            //cache for captcha answers
++            CaptchaBridge.strings.add(String.valueOf(in));
++        }
++        int all = CaptchaBridge.strings.size();
+ 
+         this.count.set(0);
+-        Connection.min = min;
+         Connection.maps1_8 = new ByteBuf[all];
+         Connection.maps1_9 = new ByteBuf[all];
+         ExecutorService executor = Executors.newFixedThreadPool(threads);
+ 
+         int i;
+ 
+-        for (i = min; i <= max; ++i) {
+-            executor.execute(new GenerateTask(this, i));
++        for (i = 0; i < all;i++) {
++            executor.execute(new GenerateTask(this,i));
+         }
+ 
+         while ((i = this.count.get()) != all) {
+@@ -55,30 +60,31 @@ public class CaptchaGenerator {
+         System.gc();
+         System.out.println("Память очищена за (" + (System.currentTimeMillis() - start) + " мс)");
+     }
+-
+     public void increment() {
+         this.count.incrementAndGet();
+     }
+ 
+-    public void generateMap(int captcha) {
+-        String s = String.valueOf(captcha);
++    public void generateMap(int i) {
+         CraftMapCanvas map = new CraftMapCanvas();
+-
+-        map.drawImage(0, 0, MapPalette.resizeImage(createCaptchaImage(s)));
+-
++        Captcha cap = new Captcha.Builder(150, 60)
++        .addText(new DefaultTextProducer(SqlStorage.lenght))
++        .addBackground(new GradiatedBackgroundProducer())
++        .addNoise()
++        .addNoise()
++        .addNoise()
++        .build();
++        map.drawImage(0, 0, MapPalette.resizeImage(cap.getImage()));
++        CaptchaBridge.strings.set(i, cap.getAnswer());
+         try {
+             MapDataPacket ex = new MapDataPacket(0, (byte) 0, MapDataPacket.Type.IMAGE, map.getMapData());
+-
+-            Connection.maps1_8[captcha - CaptchaGenerator.min] = Connection.getBytes(ex, 52, 47);
+-            Connection.maps1_9[captcha - CaptchaGenerator.min] = Connection.getBytes(ex, 36, 107);
++            Connection.maps1_8[i] = Connection.getBytes(ex, 52, 47);
++            Connection.maps1_9[i] = Connection.getBytes(ex, 36, 107);
+         } catch (Exception exception) {
++            exception.printStackTrace();
+             System.out.println("Ошибка генерации картинок, сообщите разработчику - vk.com/leymooo_s");
+             System.exit(0);
+         }
+ 
+     }
+ 
+-    public static BufferedImage createCaptchaImage(String paramString) {
+-        return CaptchaGenerator.localGCage.drawImage(paramString);
+-    }
+ }
+diff --git a/proxy/src/main/java/ru/yooxa/database/SqlStorage.java b/proxy/src/main/java/ru/yooxa/database/SqlStorage.java
+index 8ea6ba5..42d74bf 100644
+--- a/proxy/src/main/java/ru/yooxa/database/SqlStorage.java
++++ b/proxy/src/main/java/ru/yooxa/database/SqlStorage.java
+@@ -13,19 +13,15 @@ public class SqlStorage {
+ 
+     private static Set<String> ips = new HashSet<String>();
+     public int threads;
+-    public static boolean Ripple;
+-    public static boolean Blur;
+-    public static boolean Outline;
+-    public static boolean Rotate;
+     public static boolean connectionsLog;
+     public static boolean captchaOnline;
+     public static String motd;
+     public static String messageTimeout;
+     public static String messageEnter;
+     public static String messageInvalid;
+-    public static int minCaptcha;
+     public static int maxCaptcha;
+     public static int timeout;
++    public static int lenght;
+ 
+     public SqlStorage() {
+         this.loadConfig();
+@@ -43,18 +39,14 @@ public class SqlStorage {
+ 
+             if (!file.exists()) {
+                 config = new Configuration();
+-                config.set("Image-Generation-Threads", Integer.valueOf(2));
++                config.set("Image-Generation-Threads", Integer.valueOf(4));
+                 config.set("Log-Join", Boolean.valueOf(true));
+                 config.set("Timeout", Integer.valueOf(15000));
+                 config.set("Message-Timeout", "[§cCaptcha§f] Вы слишком долго вводили капчу");
+                 config.set("Message-Enter", "[§cCaptcha§f] Введите номер с картинки в чат, чтобы пройти проверку. Открыть чат кнопкой \"T\" (английская)");
+                 config.set("Message-Invalid", "[§cCaptcha§f] Неверная капча, у вас осталось §e%d§f попытк%s");
+-                config.set("Min-Captcha", Integer.valueOf(100));
+-                config.set("Mam-Captcha", Integer.valueOf(999));
+-                config.set("Map-options.Ripple", Boolean.valueOf(true));
+-                config.set("Map-options.Blur", Boolean.valueOf(true));
+-                config.set("Map-options.Outline", Boolean.valueOf(false));
+-                config.set("Map-options.Rotate", Boolean.valueOf(true));
++                config.set("Mam-Captcha", Integer.valueOf(1500));
++                config.set("Captcha-lenght", Integer.valueOf(4));
+                 ConfigurationProvider.getProvider(YamlConfiguration.class).save(config, file);
+                 BungeeCord.getInstance().getLogger().warning("§c[CAPTCHA] §eЯ создал конфиг. Редактируй \'captcha.yml\'");
+                 BungeeCord.getInstance().getLogger().warning("§c[CAPTCHA] §aЗапуск через 5 сек'");
+@@ -67,27 +59,20 @@ public class SqlStorage {
+                 config = ConfigurationProvider.getProvider(YamlConfiguration.class).load(file);
+             } else {
+                 config = ConfigurationProvider.getProvider(YamlConfiguration.class).load(file);
+-                if (!config.contains("Map-options")) {
+-                    config.set("Map-options.Ripple", Boolean.valueOf(true));
+-                    config.set("Map-options.Blur", Boolean.valueOf(true));
+-                    config.set("Map-options.Outline", Boolean.valueOf(false));
+-                    config.set("Map-options.Rotate", Boolean.valueOf(true));
++                if (!config.contains("Captcha-lenght")) {
++                    config.set("Max-lenght", Integer.valueOf(4));
+                     ConfigurationProvider.getProvider(YamlConfiguration.class).save(config, file);
+                 }
+             }
+ 
+             this.threads = config.getInt("Image-Generation-Threads");
+             SqlStorage.timeout = config.getInt("Timeout");
++            SqlStorage.lenght = config.getInt("Captcha-lenght",4);
+             SqlStorage.connectionsLog = config.getBoolean("Log-Join");
+             SqlStorage.messageTimeout = config.getString("Message-Timeout");
+             SqlStorage.messageEnter = config.getString("Message-Enter");
+             SqlStorage.messageInvalid = config.getString("Message-Invalid");
+-            SqlStorage.minCaptcha = config.getInt("Min-Captcha", 100);
+-            SqlStorage.maxCaptcha = config.getInt("Mam-Captcha", 999);
+-            SqlStorage.Ripple = config.getBoolean("Map-options.Ripple");
+-            SqlStorage.Blur = config.getBoolean("Map-options.Blur");
+-            SqlStorage.Outline = config.getBoolean("Map-options.Outline");
+-            SqlStorage.Rotate = config.getBoolean("Map-options.Rotate");
++            SqlStorage.maxCaptcha = config.getInt("Mam-Captcha", 1500);
+ 
+         } catch (Exception exception) {
+             exception.printStackTrace();
+diff --git a/proxy/src/main/java/ru/yooxa/ycore/Connection.java b/proxy/src/main/java/ru/yooxa/ycore/Connection.java
+index ca5c2ad..0134d19 100644
+--- a/proxy/src/main/java/ru/yooxa/ycore/Connection.java
++++ b/proxy/src/main/java/ru/yooxa/ycore/Connection.java
+@@ -3,9 +3,6 @@ package ru.yooxa.ycore;
+ import io.netty.buffer.ByteBuf;
+ import io.netty.buffer.ByteBufAllocator;
+ 
+-import java.util.HashMap;
+-import java.util.Map;
+-
+ import net.md_5.bungee.protocol.DefinedPacket;
+ import net.md_5.bungee.protocol.ProtocolConstants;
+ import net.md_5.bungee.protocol.packet.Login;
+@@ -17,11 +14,8 @@ import net.md_5.bungee.protocol.packet.extra.SpawnPosition;
+ 
+ public class Connection {
+ 
+-    public static int min;
+     public static ByteBuf[] maps1_8;
+     public static ByteBuf[] maps1_9;
+-    private static final Map<Integer, ByteBuf>  packets1_8 = new HashMap<Integer, ByteBuf>(4);
+-    private static final Map<Integer, ByteBuf>  packets1_9 = new HashMap<Integer, ByteBuf>(4);
+     public static final Login login = new Login(-1, (short) 0, 0, (short) 0, (short) 100, "flat", false);
+     public static final SpawnPosition spawnPosition = new SpawnPosition(5, 60, 5);
+     public static final PlayerPositionRotation playerPosition = new PlayerPositionRotation(5.0D, 500.0D, 5.0D, 90.0F, 90.0F);
+@@ -30,22 +24,11 @@ public class Connection {
+     public static final PlayerAbilities abilities1_9 = new PlayerAbilities((byte) 6, 0.0F, 0.0F);
+ 
+     public static ByteBuf getCaptcha(int captcha, int protocol) {
+-        return protocol > 47 ? Connection.maps1_9[captcha - Connection.min] : Connection.maps1_8[captcha - Connection.min];
+-    }
+-
+-    public static ByteBuf getPacket(int id, int protocol) {
+-        if (id >= 1 && id <= 4) {
+-            Map<Integer, ByteBuf>  map = protocol > 47 ? Connection.packets1_9 : Connection.packets1_8;
+-
+-            return (ByteBuf) map.get(Integer.valueOf(id));
+-        } else {
+-            throw new IllegalStateException();
+-        }
++        return protocol > 47 ? Connection.maps1_9[captcha] : Connection.maps1_8[captcha];
+     }
+-
++    
+     public static ByteBuf getBytes(DefinedPacket packet, int id, int protocol) throws Exception {
+         ByteBuf buffer = ByteBufAllocator.DEFAULT.buffer();
+-
+         DefinedPacket.writeVarInt(id, buffer);
+         packet.write(buffer, ProtocolConstants.Direction.TO_CLIENT, protocol);
+         return buffer;
+diff --git a/proxy/src/main/java/ru/yooxa/ycore/GenerateTask.java b/proxy/src/main/java/ru/yooxa/ycore/GenerateTask.java
+index 15adddc..3f5787c 100644
+--- a/proxy/src/main/java/ru/yooxa/ycore/GenerateTask.java
++++ b/proxy/src/main/java/ru/yooxa/ycore/GenerateTask.java
+@@ -7,24 +7,24 @@ public class GenerateTask implements Runnable {
+     private final Object generator;
+     private Method generateMap;
+     private Method increment;
+-    private final int n;
++    private final int i;
+ 
+-    public GenerateTask(Object generator, int n) {
++    public GenerateTask(Object generator, int i) {
+         this.generator = generator;
+ 
+         try {
+-            this.generateMap = generator.getClass().getMethod("generateMap", new Class[] { Integer.TYPE});
++            this.generateMap = generator.getClass().getMethod("generateMap", new Class[] {Integer.TYPE});
+             this.increment = generator.getClass().getMethod("increment", new Class[0]);
+         } catch (Exception exception) {
+             exception.printStackTrace();
+             System.exit(0);
+         }
+-        this.n = n;
++        this.i = i;
+     }
+ 
+     public void run() {
+         try {
+-            this.generateMap.invoke(this.generator, new Object[] { Integer.valueOf(this.n)});
++            this.generateMap.invoke(this.generator, new Object[] { Integer.valueOf(i)});
+             this.increment.invoke(this.generator, new Object[0]);
+         } catch (Exception exception) {
+             exception.printStackTrace();
+-- 
+2.6.1.windows.1
+
